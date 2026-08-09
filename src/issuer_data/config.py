@@ -23,6 +23,11 @@ class Settings(BaseSettings):
     fmp_api_key: str | None = None
     alphavantage_api_key: str | None = None
 
+    # KRX data portal now requires a (free) member login for its JSON endpoints.
+    # pykrx reads these from KRX_ID / KRX_PW; expose them here for documentation.
+    krx_id: str | None = None
+    krx_pw: str | None = None
+
     # SEC EDGAR requires a descriptive UA with contact info or it returns 403.
     sec_user_agent: str = "issuer-data research your-email@example.com"
 

@@ -33,6 +33,7 @@ class Orchestrator:
             return
         try:
             collector = build_collector(src, self.settings)
+            setattr(collector, "_current_market", market)
             records = collector.fetch_master(missing)
         except NotSupportedError as exc:
             log.warning("Cannot fetch master for %s via %s: %s", market, src, exc)
@@ -70,6 +71,8 @@ class Orchestrator:
         rows = 0
         try:
             collector = build_collector(src, self.settings)
+            # market context for market-agnostic collectors (yfinance/fmp/av)
+            setattr(collector, "_current_market", market)
             if data_type == "master":
                 rows = self._collect_master(collector, symbols, limit)
             elif data_type == "prices":

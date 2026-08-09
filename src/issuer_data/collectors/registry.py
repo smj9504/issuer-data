@@ -16,9 +16,13 @@ MARKETS = ("KR", "HK", "US")
 DATA_TYPES = ("master", "prices", "financials", "filings")
 
 # Default source per (market, data_type).
+# NOTE: KRX's data portal now requires a (free) member login (KRX_ID/KRX_PW) for
+# its JSON endpoints, so pykrx returns nothing anonymously. To keep KR working
+# out-of-the-box we default KR master/prices to yfinance (Yahoo, no account);
+# pass `--source krx` to use pykrx once KRX credentials are set.
 DEFAULTS: dict[tuple[str, str], str] = {
-    ("KR", "master"): "krx",
-    ("KR", "prices"): "krx",
+    ("KR", "master"): "yfinance",
+    ("KR", "prices"): "yfinance",
     ("KR", "financials"): "dart",
     ("KR", "filings"): "dart",
     ("HK", "master"): "hkexnews",
