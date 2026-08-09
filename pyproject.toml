@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "issuer-data"
+version = "0.1.0"
+description = "Multi-market issuer/security data collector (DART, KRX, HKEXnews, SEC EDGAR, yfinance, FMP, Alpha Vantage) into a unified SQLite DB"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "pandas>=2.2",
+    "requests>=2.32",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "python-dotenv>=1.0",
+    "tenacity>=8.3",
+    "pykrx>=1.2.8",
+    "yfinance>=0.2.40",
+    "OpenDartReader>=0.2.3",
+    "pdfplumber>=0.11",
+    "beautifulsoup4>=4.12",
+    "lxml>=5.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2",
+    "ruff>=0.5",
+]
+
+[project.scripts]
+issuer-data = "issuer_data.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+issuer_data = ["storage/*.sql"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

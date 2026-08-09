@@ -1,0 +1,17 @@
+# Runtime dependencies (mirror of pyproject.toml [project.dependencies])
+pandas>=2.2
+requests>=2.32
+pydantic>=2.7
+pydantic-settings>=2.3
+python-dotenv>=1.0
+tenacity>=8.3
+pykrx>=1.2.8
+yfinance>=0.2.40
+OpenDartReader>=0.2.3
+pdfplumber>=0.11       # PDF text extraction (HKEXnews / attachment PDFs)
+beautifulsoup4>=4.12   # HTML/XML -> text (EDGAR HTML, DART XML)
+lxml>=5.2              # fast parser backend for BeautifulSoup
+
+# Dev / test
+pytest>=8.2
+ruff>=0.5
