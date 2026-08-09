@@ -143,6 +143,39 @@ class YFinanceCollector(BaseCollector):
             )
         return out
 
+    # --------------------------------------------------- corporate actions
+    def fetch_corporate_actions(self, symbol: str, start: str, end: str):
+        from ..models import CorporateAction
+
+        market = _market_for(symbol, self._current_market)
+        start, end = default_range(start, end, default_years=5)
+        fetched = self._fetch_chart(market, symbol, start, end)
+        if not fetched:
+            return []
+        _ysym, res = fetched
+        events = res.get("events", {}) or {}
+        ccy = res.get("meta", {}).get("currency") or _CCY.get(market)
+        out: list = []
+        for ev in (events.get("dividends") or {}).values():
+            d = ev.get("date")
+            if d is None:
+                continue
+            out.append(CorporateAction(
+                symbol=symbol, market=market,
+                ex_date=_dt.datetime.fromtimestamp(d, _dt.timezone.utc).strftime("%Y-%m-%d"),
+                action_type="dividend", amount=ev.get("amount"), currency=ccy, source="yfinance"))
+        for ev in (events.get("splits") or {}).values():
+            d = ev.get("date")
+            if d is None:
+                continue
+            num, den = ev.get("numerator"), ev.get("denominator")
+            ratio = (num / den) if num and den else None
+            out.append(CorporateAction(
+                symbol=symbol, market=market,
+                ex_date=_dt.datetime.fromtimestamp(d, _dt.timezone.utc).strftime("%Y-%m-%d"),
+                action_type="split", ratio=ratio, source="yfinance"))
+        return out
+
     # yfinance library fundamentals need its curl_cffi transport (blocked here).
     def fetch_financials(self, symbol: str, years: int | None = None):
         raise NotSupportedError(

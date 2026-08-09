@@ -192,6 +192,113 @@ class FmpCollector(BaseCollector):
             return list(data[0].get("peersList", []))
         return []
 
+    # --------------------------------------------------- Extension B coverage
+    def fetch_daily_metrics(self, symbol: str, start: str, end: str):
+        from ..models import DailyMetric
+
+        start, end = default_range(start, end)
+        data = self._get(f"v3/historical-market-capitalization/{self._sym(symbol)}",
+                         limit=500, **{"from": start, "to": end})
+        out: list = []
+        if isinstance(data, list):
+            for r in data:
+                out.append(DailyMetric(
+                    symbol=symbol, market=self._current_market, metric_date=to_iso(r.get("date")),
+                    market_cap=r.get("marketCap"), currency=_ccy(self._current_market), source="fmp"))
+        return out
+
+    def fetch_ratios(self, symbol: str, years: int | None = None):
+        from ..models import Ratio
+
+        out: list = []
+        for endpoint in ("ratios", "key-metrics"):
+            data = self._get(f"v3/{endpoint}/{self._sym(symbol)}", period="annual", limit=years or 5)
+            if not isinstance(data, list):
+                continue
+            for rec in data:
+                year = _int(rec.get("calendarYear")) or _year_of(rec.get("date"))
+                if year is None:
+                    continue
+                for metric, value in rec.items():
+                    if metric in ("symbol", "date", "calendarYear", "period") \
+                            or not isinstance(value, (int, float)):
+                        continue
+                    out.append(Ratio(symbol=symbol, market=self._current_market,
+                                     fiscal_year=year, fiscal_period="FY",
+                                     metric=metric, value=float(value), source="fmp"))
+        return out
+
+    def fetch_corporate_actions(self, symbol: str, start: str, end: str):
+        from ..models import CorporateAction
+
+        out: list = []
+        div = self._get(f"v3/historical-price-full/stock_dividend/{self._sym(symbol)}")
+        for r in (div.get("historical", []) if isinstance(div, dict) else []):
+            out.append(CorporateAction(symbol=symbol, market=self._current_market,
+                                       ex_date=to_iso(r.get("date")), action_type="dividend",
+                                       amount=r.get("dividend") or r.get("adjDividend"),
+                                       currency=_ccy(self._current_market), source="fmp"))
+        spl = self._get(f"v3/historical-price-full/stock_split/{self._sym(symbol)}")
+        for r in (spl.get("historical", []) if isinstance(spl, dict) else []):
+            num, den = r.get("numerator"), r.get("denominator")
+            out.append(CorporateAction(symbol=symbol, market=self._current_market,
+                                       ex_date=to_iso(r.get("date")), action_type="split",
+                                       ratio=(num / den) if num and den else None, source="fmp"))
+        return out
+
+    def fetch_analyst(self, symbol: str):
+        from ..models import AnalystEstimate
+
+        data = self._get(f"v3/analyst-estimates/{self._sym(symbol)}", limit=10)
+        out: list = []
+        for r in (data if isinstance(data, list) else []):
+            year = _year_of(r.get("date"))
+            if year is None:
+                continue
+            for metric, key in (("revenue", "estimatedRevenue"), ("eps", "estimatedEps"),
+                                ("ebitda", "estimatedEbitda")):
+                out.append(AnalystEstimate(
+                    symbol=symbol, market=self._current_market, fiscal_year=year, metric=metric,
+                    avg_est=r.get(f"{key}Avg") or r.get(key),
+                    high_est=r.get(f"{key}High"), low_est=r.get(f"{key}Low"),
+                    num_analysts=_int(r.get("numberAnalystEstimatedRevenue")), source="fmp"))
+        return out
+
+    def fetch_news(self, symbol: str):
+        from ..models import NewsItem
+
+        data = self._get("v3/stock_news", tickers=self._sym(symbol), limit=50)
+        out: list = []
+        for r in (data if isinstance(data, list) else []):
+            out.append(NewsItem(symbol=symbol, market=self._current_market,
+                                published_at=to_iso(r.get("publishedDate")) or "",
+                                title=r.get("title") or "", url=r.get("url"), source="fmp"))
+        return out
+
+    def fetch_esg(self, symbol: str):
+        from ..models import EsgScore
+
+        data = self._get("v4/esg-environmental-social-governance-data", symbol=self._sym(symbol))
+        out: list = []
+        for r in (data if isinstance(data, list) else []):
+            out.append(EsgScore(symbol=symbol, market=self._current_market,
+                                period=to_iso(r.get("date")) or "",
+                                env=r.get("environmentalScore"), soc=r.get("socialScore"),
+                                gov=r.get("governanceScore"), total=r.get("ESGScore"), source="fmp"))
+        return out
+
+    def fetch_institutional(self, symbol: str):
+        from ..models import InstitutionalHolding
+
+        data = self._get("v3/institutional-holder/" + self._sym(symbol))
+        out: list = []
+        for r in (data if isinstance(data, list) else []):
+            out.append(InstitutionalHolding(
+                symbol=symbol, market=self._current_market,
+                quarter=to_iso(r.get("dateReported")) or "", manager=r.get("holder") or "",
+                shares=r.get("shares"), value=r.get("marketValue"), source="fmp"))
+        return out
+
     # -------------------------------------------------------------------- fx
     def fetch_fx(self, pairs: list[tuple[str, str]], start: str, end: str) -> list[FxRate]:
         start, end = default_range(start, end)
@@ -215,6 +322,15 @@ class FmpCollector(BaseCollector):
 def _period(p) -> str:
     p = str(p or "FY").upper()
     return "FY" if p in ("FY", "ANNUAL", "") else p
+
+
+def _year_of(date_str) -> int | None:
+    if not date_str:
+        return None
+    try:
+        return int(str(date_str)[:4])
+    except ValueError:
+        return None
 
 
 def _ccy(market: str) -> str:

@@ -177,6 +177,61 @@ class Orchestrator:
                 download_filing_documents(self.repo, self.settings, cid, filings)
         return total
 
+    # --------------------------------------------------------------- coverage
+    # data_type -> (collector method, table, grain, takes_date_range)
+    COVERAGE = {
+        "metrics": ("fetch_daily_metrics", "daily_metrics", "security", True),
+        "ratios": ("fetch_ratios", "ratios", "company", False),
+        "ownership": ("fetch_ownership", "ownership", "company", False),
+        "institutional": ("fetch_institutional", "institutional_holdings", "company", False),
+        "actions": ("fetch_corporate_actions", "corporate_actions", "security", True),
+        "analyst": ("fetch_analyst", "analyst_estimates", "company", False),
+        "insiders": ("fetch_insiders", "insider_trades", "company", True),
+        "earnings": ("fetch_earnings", "earnings_events", "company", False),
+        "news": ("fetch_news", "news", "company", False),
+        "index": ("fetch_index_membership", "index_membership", "company", False),
+        "esg": ("fetch_esg", "esg_scores", "company", False),
+    }
+
+    def collect_coverage(self, market: str, data_type: str, source: str | None,
+                         symbols: list[str] | None, start: str | None, end: str | None) -> int:
+        market = market.upper()
+        method_name, table, grain, dated = self.COVERAGE[data_type]
+        src = source or default_source(market, data_type)
+        if not src:
+            log.warning("No source for %s/%s; skipping", market, data_type)
+            return 0
+        run_id = self.repo.start_run(market, data_type, src)
+        rows = 0
+        try:
+            collector = build_collector(src, self.settings)
+            collector._current_market = market
+            method = getattr(collector, method_name)
+            syms = self._resolve_symbols(market, symbols)
+            self.ensure_master(market, syms)
+            if dated:
+                start2, end2 = default_range(start, end, default_years=2)
+            for sym in syms:
+                try:
+                    items = method(sym, start2, end2) if dated else method(sym)
+                except NotSupportedError:
+                    raise
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("%s %s:%s failed: %s", data_type, market, sym, exc)
+                    continue
+                n = self.repo.upsert_coverage(table, grain, items)
+                self.repo.commit()
+                rows += n
+                log.info("%s %s:%s -> %d rows", data_type, market, sym, n)
+            self.repo.finish_run(run_id, "ok", rows)
+        except NotSupportedError as exc:
+            log.warning("Skip %s/%s via %s: %s", market, data_type, src, exc)
+            self.repo.finish_run(run_id, "skipped", rows, str(exc))
+        except Exception as exc:  # noqa: BLE001
+            log.error("Error %s/%s via %s: %s", market, data_type, src, exc)
+            self.repo.finish_run(run_id, "error", rows, str(exc))
+        return rows
+
     # ------------------------------------------------------------------ helpers
     def _resolve_symbols(self, market: str, symbols: list[str] | None) -> list[str]:
         if symbols:

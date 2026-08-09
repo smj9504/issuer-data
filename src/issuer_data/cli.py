@@ -12,7 +12,10 @@ from .storage.db import connect, init_db
 log = get_logger(__name__)
 
 MARKET_CHOICES = ["kr", "hk", "us", "all"]
-TYPE_CHOICES = ["master", "prices", "financials", "filings", "fx", "peers", "all"]
+COVERAGE_TYPES = ["metrics", "ratios", "ownership", "institutional", "actions",
+                  "analyst", "insiders", "earnings", "news", "index", "esg"]
+TYPE_CHOICES = ["master", "prices", "financials", "filings", "fx", "peers", "lei",
+                *COVERAGE_TYPES, "all"]
 SOURCE_CHOICES = ["krx", "dart", "hkexnews", "edgar", "yfinance", "fmp", "alphavantage"]
 
 
@@ -50,8 +53,12 @@ def cmd_collect(args) -> int:
     try:
         for market in _markets(args.market):
             for data_type in _types(args.type):
-                if data_type in ("fx", "peers"):
+                if data_type in ("fx", "peers", "lei"):
                     total += _collect_crosscutting(orch, data_type, market, symbols, args)
+                    continue
+                if data_type in COVERAGE_TYPES:
+                    total += orch.collect_coverage(market, data_type, args.source,
+                                                   symbols, args.start, args.end)
                     continue
                 total += orch.collect(
                     market=market,
@@ -78,6 +85,10 @@ def _collect_crosscutting(orch, data_type, market, symbols, args) -> int:
         return n
     if data_type == "peers":
         return collect_peers(orch.repo, orch.settings, market, symbols)
+    if data_type == "lei":
+        from .collectors.gleif import enrich_leis
+
+        return enrich_leis(orch.repo, orch.settings, symbols, market)
     return 0
 
 

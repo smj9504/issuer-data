@@ -64,3 +64,36 @@ def test_fetch_filings_builds_urls_and_filters_dates(monkeypatch):
     assert fl.filing_id == "0000320193-23-000106"
     assert fl.url.endswith("/000032019323000106/aapl-20230930.htm")
     assert fl.doc_urls
+
+
+FORM4_XML = b"""<?xml version="1.0"?>
+<ownershipDocument>
+  <issuer><issuerName>Apple Inc.</issuerName></issuer>
+  <reportingOwner><reportingOwnerId><rptOwnerName>WILLIAMS JEFFREY E</rptOwnerName></reportingOwnerId>
+    <reportingOwnerRelationship><isOfficer>1</isOfficer><officerTitle>COO</officerTitle></reportingOwnerRelationship>
+  </reportingOwner>
+  <nonDerivativeTable><nonDerivativeTransaction>
+    <transactionShares><value>8384</value></transactionShares>
+    <transactionPricePerShare><value>251.10</value></transactionPricePerShare>
+    <transactionAcquiredDisposedCode><value>D</value></transactionAcquiredDisposedCode>
+  </nonDerivativeTransaction></nonDerivativeTable>
+</ownershipDocument>"""
+
+
+def test_parse_form4(monkeypatch):
+    c = _collector(monkeypatch, {})
+    monkeypatch.setattr(c.client, "get_bytes", lambda url, **kw: FORM4_XML)
+    rows = c._parse_form4("http://x/form4.xml", "AAPL", "2024-12-18", "acc-1")
+    assert len(rows) == 1
+    r = rows[0]
+    assert r.insider == "WILLIAMS JEFFREY E"
+    assert r.relation == "COO"
+    assert r.txn_type == "sell"
+    assert r.shares == 8384.0
+    assert r.price == 251.10
+
+
+def test_form4_xml_url_strips_render_dir(monkeypatch):
+    c = _collector(monkeypatch, {})
+    url = c._form4_xml_url("https://sec.gov/x/000/acc", "xslF345X06/form4.xml")
+    assert url == "https://sec.gov/x/000/acc/form4.xml"  # render-dir stripped

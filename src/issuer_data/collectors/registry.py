@@ -35,6 +35,23 @@ DEFAULTS: dict[tuple[str, str], str] = {
     ("US", "filings"): "edgar",
 }
 
+# Extension-B coverage defaults. yfinance (actions) and edgar (US insiders) work
+# with no key; the rest default to FMP/DART and skip cleanly without credentials.
+for _m in MARKETS:
+    DEFAULTS[(_m, "actions")] = "yfinance"
+    DEFAULTS[(_m, "metrics")] = "fmp"
+    DEFAULTS[(_m, "ratios")] = "fmp"
+    DEFAULTS[(_m, "analyst")] = "fmp"
+    DEFAULTS[(_m, "earnings")] = "fmp"
+    DEFAULTS[(_m, "news")] = "fmp"
+    DEFAULTS[(_m, "esg")] = "fmp"
+DEFAULTS[("US", "insiders")] = "edgar"
+DEFAULTS[("US", "institutional")] = "fmp"
+DEFAULTS[("US", "ownership")] = "fmp"
+DEFAULTS[("US", "index")] = "fmp"
+DEFAULTS[("KR", "insiders")] = "dart"
+DEFAULTS[("KR", "ownership")] = "dart"
+
 ALL_SOURCES = ("krx", "dart", "hkexnews", "edgar", "yfinance", "fmp", "alphavantage")
 
 

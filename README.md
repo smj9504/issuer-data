@@ -128,6 +128,50 @@ pytest        # offline tests (schema, resolver, normalization, EDGAR parsing, d
 ruff check src
 ```
 
+## Extended coverage (Extension B)
+
+Beyond the four core data types, the tool collects many more categories. `--type` accepts:
+`metrics` (market-cap/shares), `ratios`, `ownership`, `institutional`, `actions`
+(dividends/splits), `analyst`, `insiders`, `earnings`, `news`, `index`, `esg`, plus
+`lei` (GLEIF Legal Entity Identifier enrichment).
+
+```bash
+python -m issuer_data collect --market us --type insiders --symbols AAPL   # Form 4 (free, EDGAR)
+python -m issuer_data collect --market us --type actions  --symbols AAPL   # dividends/splits (free, Yahoo)
+python -m issuer_data collect --market us --type lei      --symbols AAPL   # LEI via GLEIF (free)
+python -m issuer_data collect --market us --type ratios   --symbols AAPL   # needs FMP key
+```
+
+### Statement scope & currency conversion
+
+- **연결 vs 별도 / 분기 vs 연간:** `financials.fs_scope` is `CFS` (연결/consolidated) or `OFS`
+  (별도/separate); both are stored along with quarterly and annual periods. Default
+  queries/`compare` use `CFS` + `FY`.
+- **Accounting-correct USD:** `v_financials_usd` converts each figure with the right FX —
+  **period-average** rate for income-statement / cash-flow flows, **period-end closing**
+  rate for balance-sheet stocks, daily spot for prices. `fx_rates.rate_type` is `spot`
+  (daily) or `avg` (derived period-average); `collect --type fx` produces both.
+
+### Coverage by source (free tiers)
+
+| category | free source(s) | notes |
+|----------|----------------|-------|
+| identifiers / LEI | SEC, DART, GLEIF | LEI via GLEIF (no key) |
+| market cap / shares | FMP, yfinance | foreign-ownership % = KRX login only |
+| ratios / valuation | FMP (+ computed) | US strongest |
+| ownership (major/5%) | DART, FMP | US 13D/G structured = partial |
+| institutional (13F) | FMP, EDGAR | |
+| corporate actions | yfinance, FMP, DART | free via Yahoo |
+| analyst / targets | FMP | US-centric |
+| insider trades | **SEC Form 4 (free)**, DART | fully parsed (name/role/shares/price) |
+| earnings / transcripts | FMP, AV | transcripts → documents |
+| news / sentiment | FMP, AV | |
+| index membership | FMP (US indices) | KR/HK not free |
+| ESG | FMP (tier-gated) | sustainability reports → documents |
+
+Honest gaps (land as empty columns, logged — never fabricated): **foreign-ownership %**
+(KRX login), **KR/HK index-membership history**, granular ESG grades.
+
 ## Notes & limitations
 
 - **Yahoo/yfinance** and **HKEXnews** use undocumented endpoints; they can rate-limit or

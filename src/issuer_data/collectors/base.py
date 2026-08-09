@@ -45,3 +45,38 @@ class BaseCollector(ABC):
     # --- fx (optional) ------------------------------------------------------
     def fetch_fx(self, pairs: list[tuple[str, str]], start: str, end: str) -> list[FxRate]:
         raise NotSupportedError(f"{self.source} does not provide fx rates")
+
+    # --- Extension B: comprehensive coverage (all optional) -----------------
+    # Each returns a list of the matching pydantic model; default = NotSupported.
+    def fetch_daily_metrics(self, symbol: str, start: str, end: str):
+        raise NotSupportedError(f"{self.source} does not provide daily metrics")
+
+    def fetch_ratios(self, symbol: str, years: int | None = None):
+        raise NotSupportedError(f"{self.source} does not provide ratios")
+
+    def fetch_ownership(self, symbol: str):
+        raise NotSupportedError(f"{self.source} does not provide ownership")
+
+    def fetch_institutional(self, symbol: str):
+        raise NotSupportedError(f"{self.source} does not provide institutional holdings")
+
+    def fetch_corporate_actions(self, symbol: str, start: str, end: str):
+        raise NotSupportedError(f"{self.source} does not provide corporate actions")
+
+    def fetch_analyst(self, symbol: str):
+        raise NotSupportedError(f"{self.source} does not provide analyst estimates")
+
+    def fetch_insiders(self, symbol: str, start: str, end: str):
+        raise NotSupportedError(f"{self.source} does not provide insider trades")
+
+    def fetch_earnings(self, symbol: str):
+        raise NotSupportedError(f"{self.source} does not provide earnings events")
+
+    def fetch_news(self, symbol: str):
+        raise NotSupportedError(f"{self.source} does not provide news")
+
+    def fetch_index_membership(self, symbol: str):
+        raise NotSupportedError(f"{self.source} does not provide index membership")
+
+    def fetch_esg(self, symbol: str):
+        raise NotSupportedError(f"{self.source} does not provide ESG")
