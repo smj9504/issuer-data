@@ -10,7 +10,7 @@ import datetime as _dt
 
 from ..config import Settings
 from ..logging import get_logger
-from ..models import FinancialFact, Filing, SecurityRecord
+from ..models import Filing, FinancialFact, SecurityRecord
 from ..utils.dates import default_range, to_iso
 from .base import BaseCollector, NotSupportedError
 

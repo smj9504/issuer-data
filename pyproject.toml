@@ -43,6 +43,11 @@ issuer_data = ["storage/*.sql"]
 line-length = 100
 target-version = "py310"
 
+[tool.ruff.lint]
+# Local dates are intentional (ISO date strings, no tz needed); %-format and the
+# `x == x` NaN idiom are deliberate. Ignore those pedantic rules.
+ignore = ["DTZ001", "DTZ005", "DTZ007", "DTZ011", "UP031", "PLR0124", "RUF059"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"

@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 
 from .collectors.base import NotSupportedError
-from .collectors.registry import DATA_TYPES, build_collector, default_source
+from .collectors.registry import build_collector, default_source
 from .collectors.resolver import resolve_and_store
 from .config import Settings
 from .logging import get_logger
@@ -34,7 +34,7 @@ class Orchestrator:
             return
         try:
             collector = build_collector(src, self.settings)
-            setattr(collector, "_current_market", market)
+            collector._current_market = market
             records = collector.fetch_master(missing)
         except NotSupportedError as exc:
             log.warning("Cannot fetch master for %s via %s: %s", market, src, exc)
@@ -73,7 +73,7 @@ class Orchestrator:
         try:
             collector = build_collector(src, self.settings)
             # market context for market-agnostic collectors (yfinance/fmp/av)
-            setattr(collector, "_current_market", market)
+            collector._current_market = market
             if data_type == "master":
                 rows = self._collect_master(collector, symbols, limit)
             elif data_type == "prices":

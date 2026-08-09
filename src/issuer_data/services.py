@@ -90,7 +90,7 @@ def collect_peers(repo: Repository, settings: Settings, market: str, symbols: li
     except NotSupportedError as exc:
         log.warning("Peers need FMP: %s", exc)
         return 0
-    setattr(fmp, "_current_market", market)
+    fmp._current_market = market
     if not symbols:
         rows = repo.conn.execute(
             "SELECT symbol FROM securities WHERE market=?", (market,)
@@ -130,9 +130,16 @@ def compare_symbols(conn: sqlite3.Connection, symbols: list[str]) -> None:
     if not symbols:
         print("No symbols given.")
         return
+    from .utils.symbols import normalize_symbol
+
     rows = []
     for token in symbols:
-        market, symbol = (token.split(":", 1) if ":" in token else (None, token))
+        if ":" in token:
+            market, symbol = token.split(":", 1)
+            market = market.upper()
+        else:
+            market, symbol = _infer_market(token), token
+        symbol = normalize_symbol(market or "", symbol)
         sec = _find_security(conn, symbol, market)
         if not sec:
             rows.append({"symbol": symbol, "note": "not found"})
@@ -163,6 +170,15 @@ def compare_symbols(conn: sqlite3.Connection, symbols: list[str]) -> None:
         print(f"{r['market']:6} {r['symbol']:10} {r['name'][:22]:22} {r['ccy']:4} "
               f"{r['type']:7} {r['date']:10} {_fmt(r['close_local']):>14} "
               f"{_fmt(r['close_usd']):>13} {_fmt(r['revenue']):>16} {_fmt(r['net_income']):>16}")
+
+
+def _infer_market(symbol: str) -> str | None:
+    s = symbol.upper()
+    if s.endswith((".KS", ".KQ")):
+        return "KR"
+    if s.endswith(".HK"):
+        return "HK"
+    return None
 
 
 def _find_security(conn, symbol, market):

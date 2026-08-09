@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import sqlite3
-from typing import Iterable
+from collections.abc import Iterable
 
 from ..logging import get_logger
 from ..models import (
     Company,
+    Filing,
     FilingDocument,
     FinancialFact,
-    Filing,
     FxRate,
     Price,
     Security,

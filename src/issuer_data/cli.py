@@ -95,8 +95,8 @@ def cmd_download_docs(args) -> int:
 
 
 def cmd_link(args) -> int:
-    from .storage.repository import Repository
     from .collectors.resolver import apply_overrides
+    from .storage.repository import Repository
 
     settings = get_settings()
     conn = connect(settings.db_path)
@@ -116,13 +116,16 @@ def cmd_link(args) -> int:
 
 def _link_symbols(repo, market_symbols: list[str]) -> int:
     """Link a set of MARKET:SYMBOL (or bare US symbols) onto one company."""
+    from .utils.symbols import normalize_symbol
+
     parsed = []
     for token in market_symbols:
         if ":" in token:
             m, s = token.split(":", 1)
         else:
             m, s = "US", token
-        parsed.append((m.upper(), s))
+        m = m.upper()
+        parsed.append((m, normalize_symbol(m, s)))
     target = None
     for m, s in parsed:
         cid = repo.get_company_id_for_symbol(m, s)

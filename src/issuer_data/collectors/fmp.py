@@ -10,7 +10,7 @@ from __future__ import annotations
 from ..config import Settings
 from ..http.client import HttpClient
 from ..logging import get_logger
-from ..models import FinancialFact, Filing, FxRate, Price, SecurityRecord
+from ..models import Filing, FinancialFact, FxRate, Price, SecurityRecord
 from ..utils.dates import default_range, to_iso
 from .base import BaseCollector, NotSupportedError
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC
 
-from ..models import FinancialFact, Filing, FxRate, Price, SecurityRecord
+from ..models import Filing, FinancialFact, FxRate, Price, SecurityRecord
 
 
 class NotSupportedError(NotImplementedError):

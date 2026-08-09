@@ -92,14 +92,16 @@ def apply_overrides(repo: Repository, overrides_path: str | Path) -> int:
     path = Path(overrides_path)
     if not path.exists():
         return 0
+    from ..utils.symbols import normalize_symbol
+
     groups: dict[str, list[tuple[str, str]]] = {}
     with path.open(encoding="utf-8") as fh:
         for row in csv.DictReader(fh):
             g = (row.get("group") or "").strip()
-            market = (row.get("market") or "").strip()
+            market = (row.get("market") or "").strip().upper()
             symbol = (row.get("symbol") or "").strip()
             if g and market and symbol:
-                groups.setdefault(g, []).append((market, symbol))
+                groups.setdefault(g, []).append((market, normalize_symbol(market, symbol)))
 
     linked = 0
     for members in groups.values():
