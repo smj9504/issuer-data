@@ -27,7 +27,12 @@ def resolve_and_store(repo: Repository, records: list[SecurityRecord]) -> dict[s
 
     Returns a mapping of "MARKET:SYMBOL" -> company_id.
     """
+    from ..utils.symbols import normalize_symbol
+
     out: dict[str, int] = {}
+    # normalize each record's symbol to the market canonical form
+    for rec in records:
+        rec.symbol = normalize_symbol(rec.market, rec.symbol)
     # ADR/GDR records are processed last so their underlying may already exist.
     ordered = sorted(records, key=lambda r: (r.security_type or "COMMON") in ("ADR", "GDR"))
     for rec in ordered:

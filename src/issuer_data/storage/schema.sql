@@ -139,17 +139,23 @@ CREATE TABLE IF NOT EXISTS collection_runs (
 );
 
 -- Cross-market comparison views (local + USD in one place) --------------------
--- Latest price per security with USD conversion via same-date fx_rate.
+-- Latest price per security with USD conversion via the NEAREST-PRIOR fx_rate
+-- (so holidays / small range gaps still resolve).
 DROP VIEW IF EXISTS v_latest_price;
 CREATE VIEW v_latest_price AS
 SELECT s.company_id, s.security_id, s.market, s.symbol, s.security_type, s.currency,
        p.trade_date,
        p.close AS close_local,
-       p.close * COALESCE(fx.rate, CASE WHEN p.currency = 'USD' THEN 1 END) AS close_usd
+       CASE WHEN p.currency = 'USD' THEN p.close
+            ELSE p.close * (
+                SELECT fx.rate FROM fx_rates fx
+                WHERE fx.base_ccy = p.currency AND fx.quote_ccy = 'USD'
+                  AND fx.rate_date <= p.trade_date
+                ORDER BY fx.rate_date DESC LIMIT 1
+            )
+       END AS close_usd
 FROM securities s
 JOIN prices p ON p.security_id = s.security_id
-LEFT JOIN fx_rates fx
-       ON fx.base_ccy = p.currency AND fx.quote_ccy = 'USD' AND fx.rate_date = p.trade_date
 WHERE p.trade_date = (
     SELECT MAX(p2.trade_date) FROM prices p2 WHERE p2.security_id = s.security_id
 );

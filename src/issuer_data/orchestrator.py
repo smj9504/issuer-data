@@ -12,6 +12,7 @@ from .logging import get_logger
 from .models import SecurityRecord
 from .storage.repository import Repository
 from .utils.dates import default_range
+from .utils.symbols import normalize_symbol
 
 log = get_logger(__name__)
 
@@ -179,7 +180,7 @@ class Orchestrator:
     # ------------------------------------------------------------------ helpers
     def _resolve_symbols(self, market: str, symbols: list[str] | None) -> list[str]:
         if symbols:
-            return symbols
+            return [normalize_symbol(market, s) for s in symbols]
         rows = self.conn.execute(
             "SELECT symbol FROM securities WHERE market=? ORDER BY symbol", (market,)
         ).fetchall()
