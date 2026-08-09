@@ -49,9 +49,58 @@ def collect_fx(repo: Repository, settings: Settings, start: str | None, end: str
 def _needed_currencies(conn: sqlite3.Connection) -> list[str]:
     rows = conn.execute(
         "SELECT DISTINCT currency FROM securities WHERE currency IS NOT NULL AND currency <> 'USD' "
-        "UNION SELECT DISTINCT currency FROM prices WHERE currency IS NOT NULL AND currency <> 'USD'"
+        "UNION SELECT DISTINCT currency FROM prices WHERE currency IS NOT NULL AND currency <> 'USD' "
+        "UNION SELECT DISTINCT currency FROM financials WHERE currency IS NOT NULL AND currency <> 'USD'"
     ).fetchall()
     return sorted({r[0] for r in rows if r[0]})
+
+
+_PERIOD_DAYS = {"FY": 365, "H1": 183, "Q1": 92, "Q2": 92, "Q3": 92, "Q4": 92}
+
+
+def compute_period_average_fx(repo: Repository, settings: Settings) -> int:
+    """Derive period-average FX ('avg') rows from daily spot, per (currency, fiscal
+    period) present in `financials`. Used for accounting-correct IS/CF conversion.
+
+    Ensures spot rates cover each period first (auto-extends collection).
+    """
+    conn = repo.conn
+    periods = conn.execute(
+        "SELECT DISTINCT currency, fiscal_year, fiscal_period, period_end FROM financials "
+        "WHERE currency IS NOT NULL AND currency <> 'USD'"
+    ).fetchall()
+    if not periods:
+        return 0
+    # Ensure spot FX covers the whole span of stored financial periods.
+    ends = [r["period_end"] for r in periods if r["period_end"]]
+    if ends:
+        span_start = min(_window_start(e, "FY") for e in ends)
+        span_end = max(ends)
+        collect_fx(repo, settings, span_start, span_end)
+
+    total = 0
+    for r in periods:
+        ccy, fy, fp = r["currency"], r["fiscal_year"], r["fiscal_period"]
+        pend = r["period_end"] or f"{fy}-12-31"
+        wstart = _window_start(pend, fp)
+        row = conn.execute(
+            "SELECT AVG(rate) a FROM fx_rates WHERE base_ccy=? AND quote_ccy='USD' "
+            "AND rate_type='spot' AND rate_date BETWEEN ? AND ?",
+            (ccy, wstart, pend),
+        ).fetchone()
+        if row and row["a"] is not None:
+            repo.upsert_fx_rates([FxRate(rate_date=pend, base_ccy=ccy, quote_ccy="USD",
+                                        rate_type="avg", rate=float(row["a"]), source="derived")])
+            total += 1
+    repo.commit()
+    log.info("fx period-average: %d rows", total)
+    return total
+
+
+def _window_start(period_end_iso: str, fiscal_period: str) -> str:
+    days = _PERIOD_DAYS.get(fiscal_period, 365)
+    d = _dt.datetime.strptime(period_end_iso[:10], "%Y-%m-%d").date() - _dt.timedelta(days=days)
+    return d.strftime("%Y-%m-%d")
 
 
 def _fetch_ccy_to_usd(client: HttpClient, ccy: str, start: str, end: str) -> list[FxRate]:

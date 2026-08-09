@@ -70,10 +70,12 @@ def cmd_collect(args) -> int:
 
 
 def _collect_crosscutting(orch, data_type, market, symbols, args) -> int:
-    from .services import collect_fx, collect_peers
+    from .services import collect_fx, collect_peers, compute_period_average_fx
 
     if data_type == "fx":
-        return collect_fx(orch.repo, orch.settings, args.start, args.end)
+        n = collect_fx(orch.repo, orch.settings, args.start, args.end)
+        n += compute_period_average_fx(orch.repo, orch.settings)  # accounting-correct avg rows
+        return n
     if data_type == "peers":
         return collect_peers(orch.repo, orch.settings, market, symbols)
     return 0

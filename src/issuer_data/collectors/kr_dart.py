@@ -75,34 +75,38 @@ class DartCollector(BaseCollector):
         out: list[FinancialFact] = []
         for year in range(this_year - years, this_year + 1):
             for reprt_code, period in _REPRT.items():
-                try:
-                    df = self.dart.finstate_all(symbol, year, reprt_code=reprt_code)
-                except Exception:  # noqa: BLE001
-                    df = None
-                if df is None or getattr(df, "empty", True):
-                    continue
-                for _, row in df.iterrows():
-                    val = _parse_amount(row.get("thstrm_amount"))
-                    account = row.get("account_nm")
-                    if account is None:
+                # CFS = consolidated (연결), OFS = separate (별도) — store both.
+                for fs_div in ("CFS", "OFS"):
+                    try:
+                        df = self.dart.finstate_all(symbol, year, reprt_code=reprt_code,
+                                                    fs_div=fs_div)
+                    except Exception:  # noqa: BLE001
+                        df = None
+                    if df is None or getattr(df, "empty", True):
                         continue
-                    sj = str(row.get("sj_div", "")).upper()
-                    out.append(
-                        FinancialFact(
-                            symbol=symbol,
-                            market="KR",
-                            fiscal_year=year,
-                            fiscal_period=period,
-                            statement_type=_SJ.get(sj),
-                            account=str(account),
-                            account_local=str(account),
-                            value=val,
-                            currency="KRW",
-                            unit="KRW",
-                            period_end=None,
-                            source="dart",
+                    for _, row in df.iterrows():
+                        val = _parse_amount(row.get("thstrm_amount"))
+                        account = row.get("account_nm")
+                        if account is None:
+                            continue
+                        sj = str(row.get("sj_div", "")).upper()
+                        out.append(
+                            FinancialFact(
+                                symbol=symbol,
+                                market="KR",
+                                fiscal_year=year,
+                                fiscal_period=period,
+                                fs_scope=fs_div,
+                                statement_type=_SJ.get(sj),
+                                account=str(account),
+                                account_local=str(account),
+                                value=val,
+                                currency="KRW",
+                                unit="KRW",
+                                period_end=_dart_period_end(row.get("thstrm_dt")),
+                                source="dart",
+                            )
                         )
-                    )
         return out
 
     # --------------------------------------------------------------- filings
@@ -132,6 +136,23 @@ class DartCollector(BaseCollector):
                 )
             )
         return out
+
+
+def _dart_period_end(v) -> str | None:
+    """Parse DART thstrm_dt into an ISO period-end date.
+
+    Handles a single date ('2023.12.31') and a range ('2023.01.01 ~ 2023.12.31'),
+    taking the end date; normalizes dots to dashes.
+    """
+    if v is None:
+        return None
+    s = str(v).strip()
+    if not s:
+        return None
+    if "~" in s:
+        s = s.split("~")[-1].strip()
+    s = s.replace(".", "-").replace("/", "-")
+    return to_iso(s)
 
 
 def _parse_amount(v) -> float | None:

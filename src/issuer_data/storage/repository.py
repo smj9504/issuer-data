@@ -192,16 +192,16 @@ class Repository:
         n = 0
         for f in facts:
             self._exec(
-                "INSERT INTO financials(company_id, fiscal_year, fiscal_period, "
+                "INSERT INTO financials(company_id, fiscal_year, fiscal_period, fs_scope, "
                 "statement_type, account, account_local, value, currency, unit, "
-                "period_end, source) VALUES (?,?,?,?,?,?,?,?,?,?,?) "
-                "ON CONFLICT(company_id, fiscal_year, fiscal_period, statement_type, "
+                "period_end, source) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(company_id, fiscal_year, fiscal_period, fs_scope, statement_type, "
                 "account, source) DO UPDATE SET value=excluded.value, "
                 "account_local=COALESCE(excluded.account_local, account_local), "
                 "currency=excluded.currency, unit=excluded.unit, period_end=excluded.period_end",
-                (company_id, f.fiscal_year, f.fiscal_period, f.statement_type or "",
-                 f.account, f.account_local, f.value, f.currency, f.unit, f.period_end,
-                 f.source),
+                (company_id, f.fiscal_year, f.fiscal_period, f.fs_scope or "CFS",
+                 f.statement_type or "", f.account, f.account_local, f.value, f.currency,
+                 f.unit, f.period_end, f.source),
             )
             n += 1
         return n
@@ -266,11 +266,11 @@ class Repository:
         n = 0
         for r in rates:
             self._exec(
-                "INSERT INTO fx_rates(rate_date, base_ccy, quote_ccy, rate, source) "
-                "VALUES (?,?,?,?,?) "
-                "ON CONFLICT(rate_date, base_ccy, quote_ccy, source) DO UPDATE SET "
+                "INSERT INTO fx_rates(rate_date, base_ccy, quote_ccy, rate_type, rate, source) "
+                "VALUES (?,?,?,?,?,?) "
+                "ON CONFLICT(rate_date, base_ccy, quote_ccy, rate_type, source) DO UPDATE SET "
                 "rate=excluded.rate",
-                (r.rate_date, r.base_ccy, r.quote_ccy, r.rate, r.source),
+                (r.rate_date, r.base_ccy, r.quote_ccy, r.rate_type, r.rate, r.source),
             )
             n += 1
         return n
@@ -284,6 +284,37 @@ class Repository:
             "VALUES (?,?,?,?)",
             (company_id, peer_company_id, relation, source),
         )
+
+    # ------------------------------------------------------- coverage (generic)
+    # grain -> (fk column, resolver method name)
+    _COMPANY_GRAIN = ("company_id", "get_company_id_for_symbol")
+    _SECURITY_GRAIN = ("security_id", "get_security_id")
+
+    def upsert_coverage(self, table: str, grain: str, rows: Iterable) -> int:
+        """Insert-or-replace rows for an Extension-B coverage table.
+
+        Each row is a pydantic model carrying market+symbol (resolved to the FK id)
+        plus columns matching the table. `grain` is 'company' or 'security'.
+        """
+        fk_col, resolver = self._SECURITY_GRAIN if grain == "security" else self._COMPANY_GRAIN
+        resolve = getattr(self, resolver)
+        n = 0
+        for row in rows:
+            data = row.model_dump()
+            market = data.pop("market")
+            symbol = data.pop("symbol")
+            fk_id = resolve(market, symbol)
+            if fk_id is None:
+                continue
+            cols = [fk_col] + list(data.keys())
+            vals = [fk_id] + list(data.values())
+            placeholders = ",".join("?" * len(cols))
+            self._exec(
+                f"INSERT OR REPLACE INTO {table}({','.join(cols)}) VALUES ({placeholders})",
+                tuple(vals),
+            )
+            n += 1
+        return n
 
     # --------------------------------------------------------------- run logging
     def start_run(self, market: str, data_type: str, source: str) -> int:

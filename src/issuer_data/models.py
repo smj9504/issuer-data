@@ -129,6 +129,7 @@ class FinancialFact(_Base):
     market: str
     fiscal_year: int
     fiscal_period: str = "FY"
+    fs_scope: str = "CFS"  # 'CFS'(연결/consolidated) | 'OFS'(별도/separate)
     statement_type: str | None = None
     account: str
     account_local: str | None = None
@@ -181,11 +182,12 @@ class FilingDocument(_Base):
 
 
 class FxRate(_Base):
-    """A daily FX rate: 1 base_ccy = rate quote_ccy."""
+    """An FX rate: 1 base_ccy = rate quote_ccy. rate_type 'spot' (daily) or 'avg' (period)."""
 
     rate_date: str
     base_ccy: str
     quote_ccy: str = "USD"
+    rate_type: str = "spot"
     rate: float
     source: str
 
@@ -204,3 +206,112 @@ class Peer(_Base):
     peer_market: str
     relation: str = "fmp_peer"
     source: str
+
+
+# --- Extension B coverage models (symbol-keyed; resolved at storage) ----------
+class _SymBase(_Base):
+    symbol: str
+    market: str
+    source: str
+
+
+class DailyMetric(_SymBase):
+    metric_date: str
+    market_cap: float | None = None
+    shares_outstanding: float | None = None
+    foreign_own_pct: float | None = None
+    currency: str | None = None
+
+
+class Ratio(_SymBase):
+    fiscal_year: int
+    fiscal_period: str = "FY"
+    metric: str
+    value: float | None = None
+
+
+class OwnershipRow(_SymBase):
+    as_of_date: str
+    holder_name: str
+    holder_type: str | None = None
+    shares: float | None = None
+    pct: float | None = None
+
+
+class InstitutionalHolding(_SymBase):
+    quarter: str
+    manager: str
+    shares: float | None = None
+    value: float | None = None
+
+
+class CorporateAction(_SymBase):
+    ex_date: str
+    action_type: str
+    ratio: float | None = None
+    amount: float | None = None
+    currency: str | None = None
+
+
+class AnalystEstimate(_SymBase):
+    fiscal_year: int
+    metric: str
+    avg_est: float | None = None
+    high_est: float | None = None
+    low_est: float | None = None
+    num_analysts: int | None = None
+
+
+class PriceTarget(_SymBase):
+    target_date: str
+    target: float | None = None
+    analyst: str | None = None
+
+
+class Recommendation(_SymBase):
+    rec_date: str
+    grade: str | None = None
+    strong_buy: int | None = None
+    buy: int | None = None
+    hold: int | None = None
+    sell: int | None = None
+    strong_sell: int | None = None
+
+
+class InsiderTrade(_SymBase):
+    filed_date: str
+    insider: str
+    relation: str | None = None
+    txn_type: str | None = None
+    shares: float | None = None
+    price: float | None = None
+    filing_id: str | None = None
+
+
+class EarningsEvent(_SymBase):
+    event_date: str
+    event_type: str | None = None
+    fiscal_period: str | None = None
+    eps_estimate: float | None = None
+    eps_actual: float | None = None
+
+
+class NewsItem(_SymBase):
+    published_at: str
+    title: str
+    url: str | None = None
+    sentiment: float | None = None
+
+
+class IndexMembership(_SymBase):
+    index_name: str
+    added: str | None = None
+    removed: str | None = None
+
+
+class EsgScore(_SymBase):
+    period: str
+    env: float | None = None
+    soc: float | None = None
+    gov: float | None = None
+    total: float | None = None
