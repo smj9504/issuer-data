@@ -9,7 +9,7 @@ from .collectors.registry import build_collector, default_source
 from .collectors.resolver import resolve_and_store
 from .config import Settings
 from .logging import get_logger
-from .models import SecurityRecord
+from .models import Filing, SecurityRecord
 from .storage.repository import Repository
 from .utils.dates import default_range
 from .utils.symbols import normalize_symbol
@@ -62,6 +62,7 @@ class Orchestrator:
         end: str | None = None,
         limit: int | None = None,
         download_docs: bool = False,
+        filing_types: list[str] | None = None,
     ) -> int:
         market = market.upper()
         src = source or default_source(market, data_type)
@@ -81,7 +82,8 @@ class Orchestrator:
             elif data_type == "financials":
                 rows = self._collect_financials(collector, market, symbols)
             elif data_type == "filings":
-                rows = self._collect_filings(collector, market, symbols, start, end, download_docs)
+                rows = self._collect_filings(collector, market, symbols, start, end,
+                                             download_docs, filing_types)
             else:
                 raise ValueError(f"Unknown data_type {data_type}")
             self.repo.finish_run(run_id, "ok", rows)
@@ -146,7 +148,8 @@ class Orchestrator:
             log.info("financials %s:%s -> %d facts", market, sym, n)
         return total
 
-    def _collect_filings(self, collector, market, symbols, start, end, download_docs) -> int:
+    def _collect_filings(self, collector, market, symbols, start, end, download_docs,
+                          filing_types: list[str] | None = None) -> int:
         start, end = default_range(start, end, default_years=2)
         symbols = self._resolve_symbols(market, symbols)
         self.ensure_master(market, symbols)
@@ -160,6 +163,7 @@ class Orchestrator:
             except Exception as exc:  # noqa: BLE001
                 log.warning("filings %s %s failed: %s", market, sym, exc)
                 continue
+            filings = _filter_filing_types(filings, filing_types)
             cid = self.repo.get_company_id_for_symbol(market, sym)
             if cid is None:
                 log.warning("No company_id for %s:%s; skipping filings", market, sym)
@@ -244,3 +248,17 @@ class Orchestrator:
 
 def _default_ccy(market: str) -> str:
     return {"KR": "KRW", "HK": "HKD", "US": "USD"}.get(market.upper(), "USD")
+
+
+def _filter_filing_types(filings: list[Filing], filing_types: list[str] | None) -> list[Filing]:
+    """Keep only filings whose filing_type contains one of `filing_types`.
+
+    Case-insensitive substring match, not exact — EDGAR/FMP filing_type is a
+    short form code ('8-K') where substring == exact match, but DART's is a
+    free-text report name ('분기보고서 (2024.09)') and HKEXnews's is a long
+    description, so exact match would silently under-match those two sources.
+    """
+    if not filing_types:
+        return filings
+    wanted = [t.lower() for t in filing_types]
+    return [f for f in filings if f.filing_type and any(w in f.filing_type.lower() for w in wanted)]

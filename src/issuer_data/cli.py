@@ -69,6 +69,7 @@ def cmd_collect(args) -> int:
                     end=args.end,
                     limit=args.limit,
                     download_docs=args.download_docs,
+                    filing_types=_split_csv(args.filing_type),
                 )
     finally:
         conn.close()
@@ -235,6 +236,9 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--limit", type=int, help="cap number of securities (smoke tests)")
     c.add_argument("--download-docs", action="store_true",
                    help="with --type filings: also download originals + extract text")
+    c.add_argument("--filing-type",
+                   help="with --type filings: comma-separated filter, e.g. 8-K,10-K "
+                        "(case-insensitive substring match against filing_type)")
     c.set_defaults(func=cmd_collect)
 
     d = sub.add_parser("download-docs", help="backfill original documents for stored filings")

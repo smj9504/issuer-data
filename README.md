@@ -63,6 +63,9 @@ python -m issuer_data collect --market hk --type prices --symbols 0700.HK
 # Hong Kong filings from HKEXnews (+ download original PDFs and extract text)
 python -m issuer_data collect --market hk --type filings --symbols 00700 --download-docs
 
+# Filter filings by type (comma-separated, case-insensitive substring match on filing_type)
+python -m issuer_data collect --market us --type filings --symbols AAPL --filing-type 8-K,10-K
+
 # FX (USDKRW/USDHKD) for currencies present in the DB, then compare across markets
 python -m issuer_data collect --market all --type fx --start 2024-06-01 --end 2024-07-10
 python -m issuer_data compare --symbols AAPL,005930,0700.HK
@@ -127,6 +130,16 @@ pip install -e ".[dev]"
 pytest        # offline tests (schema, resolver, normalization, EDGAR parsing, docs)
 ruff check src
 ```
+
+## One-off research vs. reusable collectors
+
+Not every question belongs in the durable `collectors/` -> `schema.sql`
+pipeline above. If the data's already collected, just `query`/pandas it. If
+it's new but unlikely to be asked again in the same shape, it goes in
+[`research/`](research/) instead of a new schema table — see
+[`research/README.md`](research/README.md) for the full triage rule
+(including what to do when an existing collector is just missing a filter,
+rather than the data being genuinely new).
 
 ## Extended coverage (Extension B)
 
