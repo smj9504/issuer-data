@@ -6,6 +6,11 @@ returns 403. Endpoints return columnar JSON; CIK is zero-padded to 10 digits.
 
 from __future__ import annotations
 
+import csv
+import re
+import zipfile
+from pathlib import Path
+
 from ..config import Settings
 from ..http.client import HttpClient
 from ..logging import get_logger
@@ -19,11 +24,18 @@ TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
 TICKERS_EXCHANGE_URL = "https://www.sec.gov/files/company_tickers_exchange.json"
 SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik10}.json"
 COMPANYFACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik10}.json"
+FORM13F_LISTING_URL = "https://www.sec.gov/data-research/sec-markets-data/form-13f-data-sets"
+FORM13F_ZIP_LINK_RE = re.compile(r'href="([^"]*form-13f-data-sets/[^"]*_form13f\.zip)"')
 
 # Forms we treat as periodic financial reports.
 _PERIODIC_FORMS = {"10-K", "10-Q", "20-F", "40-F"}
 # Exchange -> canonical name
 _EXCH = {"Nasdaq": "NASDAQ", "NYSE": "NYSE", "NYSE Arca": "NYSEARCA", "OTC": "OTC", "CBOE": "CBOE"}
+
+
+def _normalize_issuer(name: str) -> str:
+    """13F filers hand-type issuer names inconsistently; strip to bare A-Z0-9."""
+    return re.sub(r"[^A-Z0-9]+", "", name.upper())
 
 
 def cik10(cik: str | int) -> str:
@@ -56,6 +68,9 @@ class EdgarCollector(BaseCollector):
         self.settings = settings
         self.client = HttpClient(rate_limit=settings.edgar_rate_limit)
         self._ticker_map: dict[str, dict] | None = None
+        # lazily-built, process-lifetime cache for the bulk Form 13F dataset
+        self._f13f_filers: dict[str, tuple[str, str]] | None = None
+        self._f13f_rows: list[tuple[str, str, str, str]] | None = None
 
     # ------------------------------------------------------------- ticker map
     def _load_tickers(self) -> dict[str, dict]:
@@ -296,3 +311,94 @@ class EdgarCollector(BaseCollector):
                                      insider=insider, relation=relation, filing_id=acc,
                                      source="edgar"))
         return rows
+
+    # -------------------------------------------------------- institutional
+    def fetch_institutional(self, symbol: str):
+        """Institutional (13F) holders of `symbol`, from SEC's bulk quarterly dataset.
+
+        13F has no per-symbol lookup API; SEC only publishes the whole market's
+        holdings as one quarterly ZIP. The first call in a process pays for
+        downloading (~100MB) and scanning it (~4M rows); every symbol after
+        that in the same run is an in-memory list scan, no extra I/O.
+        """
+        from ..models import InstitutionalHolding
+
+        info = self._load_tickers().get(symbol.upper())
+        if not info:
+            raise ValueError(f"Unknown US ticker on EDGAR: {symbol}")
+        target = _normalize_issuer(info["title"])
+        filers, rows = self._load_form13f()
+        out: list[InstitutionalHolding] = []
+        for issuer_norm, acc, value, shares in rows:
+            if issuer_norm != target:
+                continue
+            filer = filers.get(acc)
+            if not filer:
+                continue
+            name, period = filer
+            out.append(InstitutionalHolding(
+                # VALUE is whole dollars since 2023-01-03 (was thousands before).
+                symbol=symbol, market="US", quarter=period, manager=name,
+                shares=_num(shares), value=_num(value),
+                source="edgar"))
+        return out
+
+    def _load_form13f(self) -> tuple[dict[str, tuple[str, str]], list[tuple[str, str, str, str]]]:
+        if self._f13f_rows is not None:
+            return self._f13f_filers, self._f13f_rows
+        zip_path = self._ensure_form13f_zip()
+        log.info("Parsing Form 13F bulk dataset %s (this can take ~30s)...", zip_path.name)
+        filers: dict[str, tuple[str, str]] = {}
+        rows: list[tuple[str, str, str, str]] = []
+        with zipfile.ZipFile(zip_path) as zf:
+            with zf.open("COVERPAGE.tsv") as fh:
+                reader = csv.reader(_decode(fh), delimiter="\t")
+                header = next(reader)
+                acc_i = header.index("ACCESSION_NUMBER")
+                name_i = header.index("FILINGMANAGER_NAME")
+                period_i = header.index("REPORTCALENDARORQUARTER")
+                for r in reader:
+                    filers[r[acc_i]] = (r[name_i], r[period_i])
+            with zf.open("INFOTABLE.tsv") as fh:
+                reader = csv.reader(_decode(fh), delimiter="\t")
+                header = next(reader)
+                acc_i = header.index("ACCESSION_NUMBER")
+                issuer_i = header.index("NAMEOFISSUER")
+                value_i = header.index("VALUE")
+                shares_i = header.index("SSHPRNAMT")
+                for r in reader:
+                    rows.append((_normalize_issuer(r[issuer_i]), r[acc_i], r[value_i], r[shares_i]))
+        log.info("Form 13F dataset ready: %d filers, %d holdings rows", len(filers), len(rows))
+        self._f13f_filers, self._f13f_rows = filers, rows
+        return filers, rows
+
+    def _ensure_form13f_zip(self) -> Path:
+        cache_dir = Path(self.settings.docs_dir) / "form13f_cache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        url = self._latest_form13f_zip_url()
+        name = url.rsplit("/", 1)[-1]
+        path = cache_dir / name
+        if not path.exists():
+            log.info("Downloading Form 13F bulk dataset from %s ...", url)
+            path.write_bytes(self.client.get_bytes(url))
+        return path
+
+    def _latest_form13f_zip_url(self) -> str:
+        html = self.client.get(FORM13F_LISTING_URL).text
+        links = FORM13F_ZIP_LINK_RE.findall(html)
+        if not links:
+            raise NotSupportedError("Could not find a Form 13F dataset link on sec.gov")
+        return "https://www.sec.gov" + links[0]
+
+
+def _decode(fh):
+    """Yield decoded text lines from a binary zip member (SEC TSVs are latin-1)."""
+    for line in fh:
+        yield line.decode("latin-1")
+
+
+def _num(v):
+    try:
+        return float(v) if v not in (None, "") else None
+    except (TypeError, ValueError):
+        return None

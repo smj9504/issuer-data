@@ -12,7 +12,9 @@ come from yfinance/FMP).
 from __future__ import annotations
 
 import datetime as _dt
+import io
 import json
+import re
 
 from ..config import Settings
 from ..http.client import HttpClient
@@ -29,6 +31,38 @@ _SEARCH_URL = _BASE + "/search/titleSearchServlet.do"
 _UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/131.0 Safari/537.36"
+)
+
+# Annual-report statement headings, as they appear verbatim as the first line
+# of every page belonging to that statement (repeats on multi-page statements).
+_STATEMENT_HEADINGS = {
+    "IS": {
+        "consolidated income statement",
+        "consolidated statement of profit or loss",
+        "consolidated statement of profit or loss and other comprehensive income",
+        "income statement",
+        "statement of profit or loss",
+    },
+    "BS": {
+        "consolidated statement of financial position",
+        "consolidated balance sheet",
+        "statement of financial position",
+        "balance sheet",
+    },
+    "CF": {
+        "consolidated statement of cash flows",
+        "consolidated cash flow statement",
+        "statement of cash flows",
+        "cash flow statement",
+    },
+}
+# A data row: some label text, then two number columns (current year, prior year).
+_ROW_RE = re.compile(r"^(.*\S)\s+(\(?[\d][\d,]*\)?)\s+(\(?[\d][\d,]*\)?)\s*$")
+# Strip a trailing footnote reference like "7" or "12(a)" off a row label.
+_NOTE_TAIL_RE = re.compile(r"\s+\d{1,3}(\([a-zA-Z0-9]+\))?$")
+_YEAR_PAIR_RE = re.compile(r"(20\d{2})\D{1,20}(20\d{2})")
+_UNIT_RE = re.compile(
+    r"(RMB|HKD|USD|CNY|EUR|HK\$|US\$)[’'`]?\s*(MILLION|’000|'000|000)", re.IGNORECASE
 )
 
 
@@ -142,8 +176,35 @@ class HkexNewsCollector(BaseCollector):
     def fetch_prices(self, symbol: str, start: str, end: str):
         raise NotSupportedError("HKEXnews has no price data; use yfinance/fmp for HK prices")
 
+    # ------------------------------------------------------------ financials
     def fetch_financials(self, symbol: str, years: int | None = None):
-        raise NotSupportedError("HKEXnews has no structured financials; use fmp for HK")
+        """Best-effort financial facts parsed from the latest Annual Report PDF.
+
+        HKEXnews has no structured (XBRL-like) financials API, only filing
+        PDFs. This locates the newest "Annual Report" filing, downloads it,
+        and regex-parses the Income Statement / Balance Sheet / Cash Flow
+        Statement pages by their repeated page heading. It's inherently
+        fragile across the wide variety of annual-report templates HK issuers
+        use — treat it as a fallback, not a replacement for a real XBRL feed.
+        """
+        code = hk_code(symbol)
+        annual = self._latest_annual_report(code)
+        if not annual:
+            log.warning("HKEXnews: no Annual Report filing found for %s", code)
+            return []
+        try:
+            content = self.client.get_bytes(annual.url)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("HKEXnews: failed to download annual report for %s: %s", code, exc)
+            return []
+        return _parse_annual_report(content, code)
+
+    def _latest_annual_report(self, code: str) -> Filing | None:
+        filings = self.fetch_filings(code, None, None)
+        reports = [f for f in filings if f.title and "ANNUAL REPORT" in f.title.upper() and f.url]
+        if not reports:
+            return None
+        return max(reports, key=lambda f: f.filed_date or "")
 
 
 def _fmt(iso_date: str) -> str:
@@ -165,7 +226,98 @@ def _parse_dt(value) -> str | None:
 def _strip_html(value) -> str | None:
     if not value:
         return None
-    import re
-
     text = re.sub(r"<[^>]+>", " ", str(value))
     return " ".join(text.split()) or None
+
+
+# ------------------------------------------------------------- annual report
+def _first_line_norm(text: str) -> str:
+    for line in text.splitlines():
+        line = line.strip()
+        if line:
+            return re.sub(r"\s+", " ", line).lower()
+    return ""
+
+
+def _find_statement_pages(pages_text: list[str], headings: set[str]) -> list[str]:
+    start = next((i for i, t in enumerate(pages_text) if _first_line_norm(t) in headings), None)
+    if start is None:
+        return []
+    block = [pages_text[start]]
+    for t in pages_text[start + 1:]:
+        if _first_line_norm(t) not in headings:
+            break
+        block.append(t)
+    return block
+
+
+_JUNK_LABELS = {"annual report", "interim report"}  # page-footer artifacts, e.g. "Annual Report 2025 129"
+
+
+def _clean_label(label: str) -> str | None:
+    label = _NOTE_TAIL_RE.sub("", label).strip()
+    if not label or not any(c.isalpha() for c in label):
+        return None
+    if label.lower() in _JUNK_LABELS:
+        return None
+    return label
+
+
+def _detect_unit(text: str) -> tuple[str | None, float]:
+    m = _UNIT_RE.search(text)
+    if not m:
+        return None, 1.0
+    ccy = {"HK$": "HKD", "US$": "USD"}.get(m.group(1).upper(), m.group(1).upper())
+    scale = 1_000_000.0 if m.group(2).upper() == "MILLION" else 1_000.0
+    return ccy, scale
+
+
+def _num(v: str) -> float | None:
+    neg = v.startswith("(") and v.endswith(")")
+    digits = v.strip("()").replace(",", "")
+    try:
+        n = float(digits)
+    except ValueError:
+        return None
+    return -n if neg else n
+
+
+def _parse_annual_report(content: bytes, symbol: str) -> list:
+    import pdfplumber
+
+    from ..models import FinancialFact
+
+    try:
+        with pdfplumber.open(io.BytesIO(content)) as pdf:
+            pages_text = [(p.extract_text() or "") for p in pdf.pages]
+    except Exception as exc:  # noqa: BLE001
+        log.warning("HKEXnews: failed to open annual report PDF for %s: %s", symbol, exc)
+        return []
+
+    out: list[FinancialFact] = []
+    for sttype, headings in _STATEMENT_HEADINGS.items():
+        block = _find_statement_pages(pages_text, headings)
+        if not block:
+            continue
+        full_text = "\n".join(block)
+        years = _YEAR_PAIR_RE.search(full_text)
+        if not years:
+            continue
+        y_cur, y_prev = int(years.group(1)), int(years.group(2))
+        currency, scale = _detect_unit(full_text)
+        for line in full_text.splitlines():
+            m = _ROW_RE.match(line.strip())
+            if not m:
+                continue
+            label = _clean_label(m.group(1))
+            if not label:
+                continue
+            for year, raw in ((y_cur, m.group(2)), (y_prev, m.group(3))):
+                val = _num(raw)
+                if val is None:
+                    continue
+                out.append(FinancialFact(
+                    symbol=symbol, market="HK", fiscal_year=year, fiscal_period="FY",
+                    statement_type=sttype, account=label, value=val * scale,
+                    currency=currency, period_end=f"{year}-12-31", source="hkexnews"))
+    return out
