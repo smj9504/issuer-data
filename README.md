@@ -141,6 +141,50 @@ it's new but unlikely to be asked again in the same shape, it goes in
 (including what to do when an existing collector is just missing a filter,
 rather than the data being genuinely new).
 
+## Korean statutes (국가법령정보 공동활용 OpenAPI)
+
+Standalone lookup for Korean law text via [open.law.go.kr](https://open.law.go.kr) — separate
+from the market/`--type` pipeline above (statutes are national reference data, not tied to a
+market or symbol). Needs a free `ISSUER_LAW_API_OC` — the id-part of the email you register
+with (e.g. `abcd` for `abcd@korea.kr`), not a generated key. **Most categories below must also
+be individually checked off under "OPEN API 신청" on the site** — an OC missing a category
+gets a clear error naming it, not a crash. Exception: `--action history` (법령 연혁) has no
+separate grant — it isn't its own line item in the API catalog, and the seemingly-obvious
+target name for it errors as unapproved even on a fully-approved OC; it works over the base
+현행법령 grant instead (target `eflaw`, confirmed live — see `collectors/kr_law.py`).
+
+```bash
+# 현행법령: search, then fetch full text by MST (법령일련번호, from the search results)
+python -m issuer_data law --action search --query 자본시장법
+python -m issuer_data law --action fetch  --mst 283193 --save
+
+# 법령 연혁 (revision history) / 영문법령 (English translation)
+python -m issuer_data law --action history --query 자본시장법
+python -m issuer_data law --action english --query "Capital Markets" --save
+python -m issuer_data law --action english --mst 284145            # body, once you have an MST
+
+# 신구법 비교 (old-vs-new text) / 3단비교 (법률·시행령·시행규칙 aligned)
+python -m issuer_data law --action oldnew   --mst 283193 --save
+python -m issuer_data law --action threeway --mst 283193
+
+# Anything else the API offers — 행정규칙/자치법규/판례/법령해석례/헌재결정례/조약/
+# 별표서식/법령체계도/법령명약칭 — via --target (see RAW_TARGETS in collectors/kr_law.py)
+python -m issuer_data law --action raw --target admrul --query 금융투자   # 행정규칙
+python -m issuer_data law --action raw --target prec   --query 자본시장법 # 판례
+python -m issuer_data law --action raw --target ordin  --query 건축      # 자치법규
+
+# Optionally link results to one issuer already in the DB
+python -m issuer_data law --action search --query 상법 --save --symbol KR:005930
+```
+
+`--save` persists to `statutes` / `statute_history` / `statute_translations` /
+`statute_comparisons` / `law_api_raw` (the catch-all for `--action raw` categories, which
+keep the full raw JSON per item since their fields aren't individually modeled). Without
+`--save`, results just print. `--action search`/`fetch`/`history`/`english`/`oldnew`/
+`threeway` are the hand-parsed categories above (`history` itself calls target `eflaw`, not
+a dedicated history target — see note above); every other target code goes through the
+generic `raw` path.
+
 ## Extended coverage (Extension B)
 
 Beyond the four core data types, the tool collects many more categories. `--type` accepts:

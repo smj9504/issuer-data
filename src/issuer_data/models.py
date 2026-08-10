@@ -315,3 +315,107 @@ class EsgScore(_SymBase):
     soc: float | None = None
     gov: float | None = None
     total: float | None = None
+
+
+# --- Korean statutes (국가법령정보 공동활용 OpenAPI, open.law.go.kr) -----------
+# Not symbol/market-scoped (national reference data); a caller may optionally
+# link a fetched statute to one company_id at storage time (see Repository).
+class StatuteArticle(_Base):
+    """One 조(article) of a statute's body."""
+
+    article_no: str          # '제1조' etc.
+    article_title: str | None = None
+    content: str
+
+
+class StatuteRecord(_Base):
+    """A 목록조회 (search) result row: statute metadata, no body text."""
+
+    law_id: str               # 법령ID
+    law_serial_no: str        # 법령일련번호 (MST) — required to fetch the body
+    name: str                 # 법령명한글
+    name_abbrev: str | None = None
+    law_type: str | None = None        # 법령구분명 (법률/시행령/시행규칙/...)
+    department: str | None = None      # 소관부처명
+    promulgation_date: str | None = None
+    promulgation_no: str | None = None
+    enforcement_date: str | None = None
+    revision_type: str | None = None   # 제개정구분명
+    detail_url: str | None = None
+    source: str = "law_go_kr"
+
+    @field_validator("promulgation_date", "enforcement_date", mode="before")
+    @classmethod
+    def _norm_dates(cls, v):
+        return to_iso(v)
+
+
+class StatuteDetail(_Base):
+    """A 본문조회 (body) result: full text, parsed into articles when possible."""
+
+    law_id: str
+    law_serial_no: str
+    name: str
+    department: str | None = None
+    promulgation_date: str | None = None
+    enforcement_date: str | None = None
+    articles: list[StatuteArticle] = []
+    raw_text: str | None = None   # full JSON dump as a fallback if parsing misses fields
+    source: str = "law_go_kr"
+
+    @field_validator("promulgation_date", "enforcement_date", mode="before")
+    @classmethod
+    def _norm_dates(cls, v):
+        return to_iso(v)
+
+
+class StatuteHistoryEntry(_Base):
+    """One revision in a statute's 연혁 (amendment history)."""
+
+    law_id: str
+    law_serial_no: str
+    name: str
+    enforcement_date: str | None = None
+    promulgation_date: str | None = None
+    revision_type: str | None = None
+    status: str | None = None  # 현행연혁코드: '현행'|'연혁'|'시행예정'
+    source: str = "law_go_kr"
+
+    @field_validator("promulgation_date", "enforcement_date", mode="before")
+    @classmethod
+    def _norm_dates(cls, v):
+        return to_iso(v)
+
+
+class StatuteTranslation(_Base):
+    """영문법령 (official English translation) body."""
+
+    law_id: str
+    law_serial_no: str | None = None
+    name_en: str
+    content_en: str | None = None
+    source: str = "law_go_kr"
+
+
+class StatuteComparisonEntry(_Base):
+    """One article's old-vs-new text from 신구법 or 3단비교."""
+
+    law_id: str
+    article_no: str
+    old_text: str | None = None
+    new_text: str | None = None
+    source: str = "law_go_kr"
+
+
+class LawApiRawItem(_Base):
+    """One item from any other 국가법령정보 OpenAPI category (행정규칙/자치법규/판례/
+    법령해석례/헌재결정례/조약/별표서식/법령체계도/법령명약칭/...). Kept as raw JSON —
+    unlike StatuteRecord/Detail these targets' exact field shapes aren't individually
+    modeled, so nothing is lost even for a category added after this code was written.
+    """
+
+    target: str          # API target code, e.g. 'admrul', 'prec', 'ordin'
+    item_key: str         # best-effort id within target (falls back to a content hash)
+    title: str | None = None
+    payload_json: str
+    source: str = "law_go_kr"

@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import sys
 
+from dotenv import load_dotenv
+
 from .config import get_settings
 from .logging import get_logger, setup_logging
 from .storage.db import connect, init_db
@@ -173,6 +175,146 @@ def cmd_compare(args) -> int:
     return 0
 
 
+def cmd_law(args) -> int:
+    from .collectors.base import NotSupportedError
+    from .collectors.kr_law import LawCollector
+    from .storage.repository import Repository
+
+    settings = get_settings()
+    try:
+        law = LawCollector(settings)
+    except NotSupportedError as exc:
+        print(str(exc))
+        return 2
+
+    conn = None
+    repo = None
+    company_id = None
+    if args.save:
+        conn = connect(settings.db_path)
+        repo = Repository(conn)
+        if args.symbol:
+            company_id = _company_id_for_law_link(repo, args.symbol)
+
+    try:
+        rows_written = 0
+        if args.action == "raw":
+            if not args.target:
+                print("--target is required for --action raw (see RAW_TARGETS in kr_law.py, "
+                     "e.g. admrul/ordin/prec/expc/detc/trty/licbyl/lsStmd/lsAbrv)")
+                return 2
+            if args.law_id or args.mst:
+                items = [law.fetch_raw(args.target, item_id=args.law_id, mst=args.mst)]
+            else:
+                if not args.query:
+                    print("--query (or --law-id/--mst) is required for --action raw")
+                    return 2
+                items = law.search_raw(args.target, args.query,
+                                       display=args.display, page=args.page)
+            _print_rows(items, ["target", "item_key", "title"])
+            if repo:
+                rows_written = repo.upsert_law_api_raw(items, company_id=company_id)
+        elif args.action == "search":
+            if not args.query:
+                print("--query is required for --action search")
+                return 2
+            recs = law.search_statutes(args.query, display=args.display, page=args.page)
+            _print_rows(recs, ["law_id", "name", "law_type", "department",
+                               "enforcement_date", "law_serial_no"])
+            if repo:
+                rows_written = repo.upsert_statutes(recs, company_id=company_id)
+        elif args.action == "fetch":
+            if not args.law_id and not args.mst:
+                print("--law-id or --mst is required for --action fetch")
+                return 2
+            detail = law.get_statute_detail(law_id=args.law_id, mst=args.mst)
+            print(f"{detail.name} ({detail.law_id}, MST={detail.law_serial_no})")
+            print(f"enforcement_date={detail.enforcement_date}  articles={len(detail.articles)}")
+            for a in detail.articles[:10]:
+                print(f"  {a.article_no}: {(a.content or '')[:80]}")
+            if repo:
+                repo.upsert_statute_detail(detail, company_id=company_id)
+                rows_written = 1
+        elif args.action == "history":
+            if not args.query:
+                print("--query is required for --action history (name/keyword; "
+                     "add --law-id to narrow if it matches more than one law)")
+                return 2
+            entries = law.search_history(args.query, law_id=args.law_id,
+                                         display=args.display, page=args.page)
+            _print_rows(entries, ["law_id", "name", "status", "revision_type",
+                                  "promulgation_date", "enforcement_date", "law_serial_no"])
+            if repo:
+                rows_written = repo.upsert_statute_history(entries, company_id=company_id)
+        elif args.action == "english":
+            if args.law_id or args.mst:
+                tr = law.get_english_detail(law_id=args.law_id, mst=args.mst)
+                print(f"{tr.name_en} ({tr.law_id})")
+                print((tr.content_en or "")[:500])
+                if repo:
+                    rows_written = repo.upsert_statute_translations([tr], company_id=company_id)
+            else:
+                if not args.query:
+                    print("--query (or --law-id/--mst) is required for --action english")
+                    return 2
+                recs = law.search_english(args.query, display=args.display, page=args.page)
+                _print_rows(recs, ["law_id", "name", "law_type", "enforcement_date",
+                                   "law_serial_no"])
+                if repo:
+                    rows_written = repo.upsert_statutes(recs, company_id=company_id)
+        elif args.action in ("oldnew", "threeway"):
+            if not args.mst:
+                print("--mst is required for --action oldnew/threeway")
+                return 2
+            entries = (law.get_old_and_new(mst=args.mst) if args.action == "oldnew"
+                      else law.get_three_way(mst=args.mst))
+            _print_rows(entries, ["law_id", "article_no", "old_text", "new_text"])
+            if repo:
+                rows_written = repo.upsert_statute_comparisons(entries, company_id=company_id)
+        if repo:
+            repo.commit()
+            print(f"Saved {rows_written} row(s)"
+                 + (f", linked to company_id={company_id}" if company_id else ""))
+        return 0
+    except NotSupportedError as exc:
+        print(str(exc))
+        return 2
+    finally:
+        if conn:
+            conn.close()
+
+
+def _company_id_for_law_link(repo, symbol_arg: str) -> int | None:
+    from .utils.symbols import normalize_symbol
+
+    market, _, symbol = symbol_arg.partition(":")
+    if not symbol:
+        market, symbol = "KR", market
+    market = market.upper()
+    symbol = normalize_symbol(market, symbol)
+    cid = repo.get_company_id_for_symbol(market, symbol)
+    if cid is None:
+        log.warning("No company found for %s:%s; saving statute without a link", market, symbol)
+    return cid
+
+
+def _print_rows(items, fields: list[str]) -> None:
+    if not items:
+        print("(no results)")
+        return
+    print(" | ".join(fields))
+    for it in items:
+        d = it.model_dump()
+        print(" | ".join(_truncate(d.get(f)) for f in fields))
+
+
+def _truncate(v, n: int = 60) -> str:
+    if v is None:
+        return ""
+    s = str(v)
+    return s if len(s) <= n else s[: n - 1] + "…"
+
+
 def cmd_status(args) -> int:
     settings = get_settings()
     conn = connect(settings.db_path)
@@ -264,10 +406,37 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("--sql", required=True)
     q.set_defaults(func=cmd_query)
 
+    lw = sub.add_parser("law", help="query Korean statutes (국가법령정보 OpenAPI)")
+    lw.add_argument("--action", required=True,
+                    choices=["search", "fetch", "history", "english", "oldnew",
+                             "threeway", "raw"],
+                    help="search/fetch=현행법령 목록/본문, history=연혁, "
+                         "english=영문법령, oldnew=신구법, threeway=3단비교, "
+                         "raw=any other category via --target (행정규칙/자치법규/판례/...)")
+    lw.add_argument("--target", help="API target code for --action raw, "
+                    "e.g. admrul/ordin/prec/expc/detc/trty/licbyl/lsStmd/lsAbrv")
+    lw.add_argument("--query", help="statute name/keyword")
+    lw.add_argument("--law-id", help="법령ID (or the item's own id for --action raw)")
+    lw.add_argument("--mst", help="법령일련번호 (MST)")
+    lw.add_argument("--display", type=int, default=20)
+    lw.add_argument("--page", type=int, default=1)
+    lw.add_argument("--save", action="store_true", help="persist results to the database")
+    lw.add_argument("--symbol", help="MARKET:SYMBOL to link results to an issuer (with --save)")
+    lw.set_defaults(func=cmd_law)
+
     return p
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Windows consoles default to a legacy codepage (e.g. cp1252) that can't
+    # encode Korean/Chinese text coming from KRX/HKEXnews/DART; force UTF-8.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+    # pydantic-settings reads .env into Settings but never touches os.environ;
+    # pykrx's KRX login reads KRX_ID/KRX_PW straight from os.environ, so load
+    # .env into the real process environment too.
+    load_dotenv()
     parser = build_parser()
     args = parser.parse_args(argv)
     setup_logging("DEBUG" if getattr(args, "verbose", False) else None)
