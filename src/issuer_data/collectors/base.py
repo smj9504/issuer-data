@@ -80,3 +80,6 @@ class BaseCollector(ABC):
 
     def fetch_esg(self, symbol: str):
         raise NotSupportedError(f"{self.source} does not provide ESG")
+
+    def fetch_demand_signals(self, symbol: str):
+        raise NotSupportedError(f"{self.source} does not provide demand signals")

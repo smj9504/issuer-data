@@ -303,6 +303,40 @@ class NewsItem(_SymBase):
     sentiment: float | None = None
 
 
+class DemandSignal(_SymBase):
+    """A book-building / demand signal for an offering (IPO or follow-on).
+
+    US filers have no obligation to disclose order-book detail (subscription
+    ratio, order volume), unlike KR DART. This instead captures what free,
+    official sources do reveal: deal-size changes on Nasdaq's IPO calendar
+    (filed vs. priced amount, a proxy for "upsized due to demand") and
+    self-reported "oversubscribed" language found in the company's own SEC
+    filings via EDGAR full-text search.
+    """
+
+    signal_date: str
+    # 'nasdaq_calendar' | 'sec_fulltext' | 'price_band' | 'anchor_investor'
+    # | 'ttw_fulltext' | 'confidential_review'
+    signal_type: str
+    filed_amount: float | None = None
+    priced_amount: float | None = None
+    price: float | None = None
+    shares: float | None = None
+    # anchor-investor "indication of interest" signals only; "" (not None) for
+    # every other signal_type — it's part of the table's primary key, and a
+    # NULL column never collides with another NULL under SQL uniqueness rules,
+    # which would silently break dedup for all the other signal types.
+    investor_name: str = ""
+    indicated_amount: float | None = None
+    detail: str | None = None
+    url: str | None = None
+
+    @field_validator("signal_date", mode="before")
+    @classmethod
+    def _norm_sd(cls, v):
+        return to_iso(v)
+
+
 class IndexMembership(_SymBase):
     index_name: str
     added: str | None = None

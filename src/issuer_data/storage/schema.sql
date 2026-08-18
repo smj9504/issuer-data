@@ -297,6 +297,34 @@ CREATE TABLE IF NOT EXISTS news (
     PRIMARY KEY (company_id, published_at, title, source)
 );
 
+-- Demand/oversubscription signals for an offering (US has no order-book
+-- disclosure requirement, so this is best-effort from free official sources:
+-- Nasdaq's IPO calendar deal-size changes, SEC EDGAR full-text search hits
+-- ('oversubscribed' / 'testing-the-waters'), IPO price-band escalation,
+-- anchor-investor "indication of interest" disclosures, and the length of
+-- the confidential DRS review period) --
+CREATE TABLE IF NOT EXISTS demand_signals (
+    company_id      INTEGER NOT NULL REFERENCES companies(company_id) ON DELETE CASCADE,
+    signal_date     TEXT NOT NULL,
+    -- 'nasdaq_calendar' | 'sec_fulltext' | 'price_band' | 'anchor_investor'
+    -- | 'ttw_fulltext' | 'confidential_review'
+    signal_type     TEXT NOT NULL,
+    filed_amount    REAL,                 -- as-proposed deal size (USD)
+    priced_amount   REAL,                 -- final confirmed deal size (USD)
+    price           REAL,
+    shares          REAL,
+    -- anchor-investor name (best-effort text extraction); '' for every other
+    -- signal_type. Part of the primary key, so it must stay NOT NULL — a
+    -- nullable column here would break dedup for all other signal types
+    -- (SQL treats NULL <> NULL, so two NULL rows never collide).
+    investor_name   TEXT NOT NULL DEFAULT '',
+    indicated_amount REAL,                -- anchor investor's indicated $ (USD)
+    detail          TEXT,                 -- quoted snippet / summary
+    url             TEXT,
+    source          TEXT NOT NULL,
+    PRIMARY KEY (company_id, signal_date, signal_type, source, investor_name)
+);
+
 -- Index membership history (FMP US indices) -----------------------------------
 CREATE TABLE IF NOT EXISTS index_membership (
     company_id INTEGER NOT NULL REFERENCES companies(company_id) ON DELETE CASCADE,

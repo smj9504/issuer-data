@@ -195,6 +195,7 @@ class Orchestrator:
         "news": ("fetch_news", "news", "company", False),
         "index": ("fetch_index_membership", "index_membership", "company", False),
         "esg": ("fetch_esg", "esg_scores", "company", False),
+        "demand": ("fetch_demand_signals", "demand_signals", "company", False),
     }
 
     def collect_coverage(self, market: str, data_type: str, source: str | None,

@@ -46,6 +46,7 @@ for _m in MARKETS:
     DEFAULTS[(_m, "news")] = "fmp"
     DEFAULTS[(_m, "esg")] = "fmp"
 DEFAULTS[("US", "insiders")] = "edgar"
+DEFAULTS[("US", "demand")] = "edgar"  # no order-book disclosure elsewhere; US-only
 DEFAULTS[("US", "institutional")] = "fmp"
 DEFAULTS[("US", "ownership")] = "fmp"
 DEFAULTS[("US", "index")] = "fmp"

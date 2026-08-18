@@ -6,6 +6,7 @@ data/*.sqlite
 data/*.sqlite-journal
 data/*.sqlite-wal
 data/*.sqlite-shm
+data/*.sqlite.bak
 data/documents/
 data/company_overrides.csv
 
