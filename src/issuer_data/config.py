@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -23,9 +24,17 @@ class Settings(BaseSettings):
     alphavantage_api_key: str | None = None
 
     # KRX data portal now requires a (free) member login for its JSON endpoints.
-    # pykrx reads these from KRX_ID / KRX_PW; expose them here for documentation.
-    krx_id: str | None = None
-    krx_pw: str | None = None
+    # pykrx reads the UNPREFIXED KRX_ID / KRX_PW straight from os.environ, so these
+    # read the same unprefixed names (ISSUER_-prefixed copies still work) instead of
+    # silently staying None while pykrx is in fact authenticated.
+    krx_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("KRX_ID", "ISSUER_KRX_ID"),
+    )
+    krx_pw: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("KRX_PW", "ISSUER_KRX_PW"),
+    )
 
     # SEC EDGAR requires a descriptive UA with contact info or it returns 403.
     sec_user_agent: str = "issuer-data research your-email@example.com"
