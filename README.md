@@ -175,8 +175,15 @@ python -m issuer_data collect --market hk --type filings --symbols 00700 \
   `page_end` and a `source_engine`).
 - **Narrative reflow** — running headers/footers and page numbers (found by recurrence
   across pages, not a pattern list) are removed, line-end hyphenation is joined, and
-  paragraphs split across lines/pages are merged into continuous text (CJK joined without
-  inserted spaces). The reflowed text replaces the flat per-page blob in `text_content`.
+  paragraphs split across lines/pages are merged into continuous text. **This runs on every
+  PDF**, with or without `--extract-tables`: page furniture and one-line-per-line breaks
+  are a problem for anything reading the text, not only for table work.
+- **Column reading order** — a two-column page is read down one column and then the other.
+  pdfplumber groups words into lines by their y position, so the columns arrive welded
+  together ("LEFT sentence one. RIGHT sentence one."), which no amount of reordering
+  afterwards can undo; the columns are separated from the word coordinates first. Pages
+  that produced a table are left alone — the wide gap in a financial statement is between
+  a label and its figures, and reordering that would tear its rows apart.
 - **Numeric grounding + grid consistency** — every number emitted in a table is checked
   against the raw text layer, an anti-hallucination guard on escalation output. Grounding
   alone cannot judge a *locally* read table, whose digits come from that same text layer

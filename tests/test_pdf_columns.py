@@ -168,3 +168,57 @@ def test_ruled_tables_still_come_from_pdfplumber():
     result = extract_structured(content)
     assert result.tables
     assert {t.source_engine for t in result.tables} == {"pdfplumber"}
+
+
+# ------------------------------------------------------- column reading order
+def _two_column_pdf(heading: str, left: list[str], right: list[str]) -> bytes:
+    doc = pymupdf.open()
+    page = doc.new_page(width=560, height=340)
+    page.insert_text((50, 40), heading, fontname=FONT, fontsize=11)
+    for i, (l, r) in enumerate(zip(left, right)):
+        page.insert_text((50, 90 + i * 24), l, fontname=FONT, fontsize=10)
+        page.insert_text((320, 90 + i * 24), r, fontname=FONT, fontsize=10)
+    out = doc.tobytes()
+    doc.close()
+    return out
+
+
+_LEFT = [f"LEFT sentence {i} of the left column." for i in range(5)]
+_RIGHT = [f"RIGHT sentence {i} of the right column." for i in range(5)]
+
+
+def test_columns_are_read_one_after_the_other():
+    """pdfplumber groups by y, so the two columns arrive welded line by line."""
+    from issuer_data.pdf_columns import column_aware_lines
+
+    content = _two_column_pdf("CHAIRMAN STATEMENT spanning the whole measure", _LEFT, _RIGHT)
+    welded = first_page(content).extract_text_lines(strip=True)
+    assert any("LEFT" in ln["text"] and "RIGHT" in ln["text"] for ln in welded)
+
+    texts = [ln["text"] for ln in column_aware_lines(first_page(content))]
+    assert [t for t in texts if t.startswith("LEFT")] == _LEFT
+    assert texts.index("LEFT sentence 4 of the left column.") < texts.index(
+        "RIGHT sentence 0 of the right column.")
+
+
+def test_spanning_heading_stays_above_its_columns():
+    from issuer_data.pdf_columns import column_aware_lines
+
+    content = _two_column_pdf("CHAIRMAN STATEMENT spanning the whole measure", _LEFT, _RIGHT)
+    texts = [ln["text"] for ln in column_aware_lines(first_page(content))]
+    assert texts[0].startswith("CHAIRMAN STATEMENT")
+
+
+def test_single_column_page_is_left_to_pdfplumber():
+    """Returning None keeps ordinary documents on the original line grouping."""
+    from issuer_data.pdf_columns import column_aware_lines
+
+    rows = [[(60, f"A single column line number {i} of running prose.")] for i in range(8)]
+    assert column_aware_lines(first_page(make_pdf(rows))) is None
+
+
+def test_a_tables_label_gap_is_not_a_column_gutter():
+    """A financial statement has a wide gap too; reordering it tears rows apart."""
+    from issuer_data.pdf_columns import column_aware_lines
+
+    assert column_aware_lines(first_page(_financial_pdf())) is None

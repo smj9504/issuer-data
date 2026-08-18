@@ -174,6 +174,15 @@ def _pdf_page_texts(content: bytes) -> list[str]:
 
 
 def _pdf_text(content: bytes) -> str | None:
+    from .pdf_extract import reflow_pdf
+
+    try:
+        text = reflow_pdf(content)
+    except Exception as exc:  # noqa: BLE001
+        log.debug("reflow failed, falling back to flat page text: %s", exc)
+        text = None
+    if text:
+        return text
     pages = [t for t in _pdf_page_texts(content) if t]
     return "\n".join(pages).strip() or None  # None => likely scanned/image PDF
 
@@ -300,15 +309,21 @@ def _download_one(
 
 def _ocr_pages_without_text(content: bytes, text: str | None,
                             settings: Settings, url: str) -> str | None:
-    """Fill in pages that carry no text layer, keeping the pages that do."""
+    """Fill in pages that carry no text layer, keeping the pages that do.
+
+    The recovered text is put back as lines on its own page before the narrative
+    is reflowed, so an OCR'd page takes part in paragraph merging and header
+    stripping exactly like the pages around it.
+    """
+    from .pdf_extract import parse_pdf_pages, reflow_narrative
     from .pdf_ocr import ocr_pages, ocr_ready
 
     try:
-        pages = _pdf_page_texts(content)
+        pages = parse_pdf_pages(content, fallback=None)
     except Exception as exc:  # noqa: BLE001
-        log.debug("could not read per-page text for %s: %s", url, exc)
+        log.debug("could not read pages for %s: %s", url, exc)
         return text
-    missing = {i for i, t in enumerate(pages) if not t}
+    missing = {i for i, page in enumerate(pages) if not page["lines"]}
     if not missing:
         return text
     if not ocr_ready():
@@ -322,14 +337,29 @@ def _ocr_pages_without_text(content: bytes, text: str | None,
         log.warning("OCR failed %s: %s", url, exc)
         return text
     for index, page_text in recovered.items():
-        pages[index] = page_text
+        pages[index]["lines"] = _lines_from_ocr(page_text, pages[index])
     still_empty = len(missing) - len(recovered)
     if recovered:
         log.info("OCR recovered %d of %d text-less page(s) for %s",
                  len(recovered), len(missing), url)
     if still_empty:
         log.warning("%d page(s) yielded no text even after OCR: %s", still_empty, url)
-    return "\n".join(t for t in pages if t).strip() or None
+    return reflow_narrative(pages) or text
+
+
+def _lines_from_ocr(page_text: str, page: dict) -> list[dict]:
+    """Turn OCR output into line dicts, spread down the page it came from.
+
+    OCR gives no geometry, so the lines are laid out full width and evenly: wide
+    enough never to be mistaken for a column, and ordered so they reflow in the
+    sequence they were read.
+    """
+    rows = [r.strip() for r in page_text.splitlines() if r.strip()]
+    height = float(page.get("height") or 0) or 1.0
+    width = float(page.get("width") or 0) or 1.0
+    step = height / max(len(rows), 1)
+    return [{"text": row, "x0": 0.0, "x1": width,
+             "top": i * step, "bottom": (i + 1) * step} for i, row in enumerate(rows)]
 
 
 def download_filing_documents(

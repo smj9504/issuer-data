@@ -211,3 +211,31 @@ def test_sparse_but_real_table_is_kept():
     rows = [["1. Class of shares", "Ordinary shares", "", "", "Type of shares", "Not applicable"],
             ["Stock code", "00700", "", "", "Description", ""]]
     assert not _too_empty(rows)
+
+
+# --------------------------------------------- the default path gets the reflow
+def test_plain_extraction_is_reflowed_without_asking_for_tables():
+    """Page furniture and one-line-per-line breaks hurt anything reading the
+    text, not only table work, so the narrative pass is not behind a table flag."""
+    pymupdf = pytest.importorskip("pymupdf")
+    from issuer_data.documents import extract_text
+
+    sentence = ["The Group delivered record revenue this year, driven by strong",
+                "demand across all of its principal operating segments and",
+                "continued disciplined cost control."]
+    doc = pymupdf.open()
+    # Four pages: a header is only treated as furniture once it recurs, which
+    # two pages cannot establish.
+    for page_no in range(1, 5):
+        page = doc.new_page(width=420, height=260)
+        page.insert_text((40, 22), "TENCENT HOLDINGS LIMITED", fontsize=9)   # running header
+        for i, line in enumerate(sentence):
+            page.insert_text((40, 90 + i * 18), line, fontsize=10)
+        page.insert_text((190, 240), f"Page {page_no} of 4", fontsize=9)     # running footer
+    content = doc.tobytes()
+    doc.close()
+
+    text = extract_text(content, "pdf") or ""
+    assert "Page 1 of 4" not in text and "Page 4 of 4" not in text
+    assert "TENCENT HOLDINGS LIMITED" not in text          # recurring header dropped
+    assert "strong demand across" in text                  # paragraph merged across lines

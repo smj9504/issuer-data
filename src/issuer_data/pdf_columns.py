@@ -182,3 +182,137 @@ def _header_rows(edges: list, start: int, tol: float, min_cols: int,
             break
         head.insert(0, idx)
     return head
+
+
+# --------------------------------------------------------- column reading order
+_GUTTER_MIN_FRAC = 0.04      # narrower than this is word spacing, not a gutter
+_GUTTER_MIN_SIDE = 0.15      # each column must hold this share of the page's words
+_BIN = 2.0                   # x resolution when looking for a gutter, in points
+_GUTTER_CROSS_FRAC = 0.15    # share of rows a heading may drive through it
+
+
+def column_aware_lines(page) -> list[dict] | None:
+    """Lines of a column-set page, one column after the other.
+
+    pdfplumber groups words into lines by their y position, so on a two-column
+    page it returns "LEFT sentence one. RIGHT sentence one." as a single line and
+    every sentence ends up interleaved with the one beside it. Reordering after
+    the fact cannot undo that, so the columns have to be separated from the word
+    coordinates first.
+
+    Returns None when the page is not in columns, which leaves single-column
+    documents on pdfplumber's own line grouping, untouched.
+    """
+    words = page.extract_words(keep_blank_chars=False)
+    if len(words) < _MIN_COLUMN_WORDS:
+        return None
+    heights = [w["bottom"] - w["top"] for w in words]
+    y_tol = max(1.5, statistics.median(heights) * 0.5)
+    rows = _group_rows(words, y_tol)
+    gutter = _page_gutter(rows)
+    if gutter is None or not _both_sides_are_prose(rows, gutter):
+        return None
+
+    out: list[dict] = []
+    segment: list[list[dict]] = []
+    for row in rows:
+        # A heading runs straight through the gutter; it belongs where it sits and
+        # closes off the column block above it.
+        if any(w["x0"] < gutter < w["x1"] for w in row):
+            out.extend(_columns_then(segment, gutter))
+            out.append(_as_line(row))
+            segment = []
+        else:
+            segment.append(row)
+    out.extend(_columns_then(segment, gutter))
+    return out
+
+
+_MIN_COLUMN_WORDS = 20
+
+
+def _columns_then(rows: list[list[dict]], gutter: float) -> list[dict]:
+    """All of the left column's lines, then all of the right column's."""
+    left = [[w for w in row if w["x1"] <= gutter] for row in rows]
+    right = [[w for w in row if w["x0"] > gutter] for row in rows]
+    return ([_as_line(r) for r in left if r] + [_as_line(r) for r in right if r])
+
+
+def _as_line(row: list[dict]) -> dict:
+    row = sorted(row, key=lambda w: w["x0"])
+    return {
+        "text": " ".join(w["text"] for w in row),
+        "x0": min(w["x0"] for w in row), "x1": max(w["x1"] for w in row),
+        "top": min(w["top"] for w in row), "bottom": max(w["bottom"] for w in row),
+    }
+
+
+_PROSE_MIN_WORDS_PER_ROW = 4.0
+_PROSE_MAX_NUMERIC_ROWS = 0.5
+
+
+def _both_sides_are_prose(rows: list[list[dict]], gutter: float) -> bool:
+    """Whether the gap really separates two columns of text.
+
+    A financial statement has a wide gap too — between its labels and its figures
+    — and reordering *that* would tear the rows of a balance sheet apart. Two
+    columns of prose carry running text on both sides; a table's right-hand side
+    is short and numeric.
+    """
+    for side in ([[w for w in r if w["x1"] <= gutter] for r in rows],
+                 [[w for w in r if w["x0"] > gutter] for r in rows]):
+        filled = [r for r in side if r]
+        if not filled:
+            return False
+        if sum(len(r) for r in filled) / len(filled) < _PROSE_MIN_WORDS_PER_ROW:
+            return False
+        numeric = sum(1 for r in filled if all(_is_numeric(w["text"]) for w in r))
+        if numeric / len(filled) > _PROSE_MAX_NUMERIC_ROWS:
+            return False
+    return True
+
+
+def _page_gutter(rows: list[list[dict]]) -> float | None:
+    """Centre of the vertical band that few rows cross, if it splits the page.
+
+    Counted per row rather than per word: a spanning heading puts ink right
+    across the gutter, so requiring *no* word there would hide the gutter on any
+    page that has a title over its columns.
+    """
+    words = [w for row in rows for w in row]
+    left = min(w["x0"] for w in words)
+    right = max(w["x1"] for w in words)
+    span = right - left
+    if span <= 0:
+        return None
+    bins = max(1, int(span / _BIN))
+    crossings = [0] * bins
+
+    def _bin(x: float) -> int:
+        return min(bins - 1, max(0, int((x - left) / span * bins)))
+
+    for row in rows:
+        hit = set()
+        for w in row:
+            hit.update(range(_bin(w["x0"]), _bin(w["x1"]) + 1))
+        for b in hit:
+            crossings[b] += 1
+
+    # At least one row may cross: a single heading over the columns must not
+    # hide the gutter on a short page, where one row is already >15%.
+    allowed = max(1.0, len(rows) * _GUTTER_CROSS_FRAC)
+    lo, hi = int(bins * 0.2), int(bins * 0.8)      # a gutter is not a margin
+    best_len, best_end, run = 0, -1, 0
+    for i in range(bins):
+        run = 0 if crossings[i] > allowed else run + 1
+        if run > best_len and lo <= i <= hi:
+            best_len, best_end = run, i
+    if best_len == 0 or best_len * _BIN < span * _GUTTER_MIN_FRAC:
+        return None
+    gutter = left + ((best_end - best_len / 2 + 0.5) / bins) * span
+    # An indent or a ragged margin is not a gutter: both sides must carry text.
+    on_left = sum(1 for w in words if w["x1"] <= gutter)
+    on_right = sum(1 for w in words if w["x0"] > gutter)
+    if min(on_left, on_right) < len(words) * _GUTTER_MIN_SIDE:
+        return None
+    return gutter

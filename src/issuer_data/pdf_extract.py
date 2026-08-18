@@ -170,7 +170,11 @@ _HANGUL = (
     (0xAC00, 0xD7A3), (0xD7B0, 0xD7FF),
 )
 _SENT_END = tuple(".!?…。！？」』）)")
-_PAGE_NUM_RE = re.compile(r"^[\s\-–—]*(?:page|p\.?|페이지|第)?\s*\d+\s*(?:/\s*\d+)?"
+# "12", "- 12 -", "Page 3 of 47", "3 / 47", "第 3 页", "3쪽". The "of" form is
+# what HKEX and SEC filings actually print, and matching only "/" left a page
+# number on every page of them.
+_PAGE_NUM_RE = re.compile(r"^[\s\-–—]*(?:page|p\.?|페이지|第)?\s*\d+\s*"
+                          r"(?:(?:of|/|–|—|-)\s*\d+)?"
                           r"\s*(?:쪽|페이지|页)?[\s\-–—]*$", re.IGNORECASE)
 
 
@@ -222,6 +226,82 @@ def _join(acc: str, nxt: str) -> str:
     return acc + " " + nxt
 
 
+# Column-aware reading order --------------------------------------------------
+# A line this wide (relative to the page's text block) spans the whole measure,
+# so it is a heading rather than column content and breaks the column region.
+_SPANNING_FRAC = 0.72
+_MIN_GUTTER_FRAC = 0.03      # a gutter narrower than this is word spacing
+_MIN_COLUMN_LINES = 3        # each side must hold a real run of text
+_MAX_COLUMN_DEPTH = 3        # two splits is already three columns
+
+
+def reading_order(lines: list[dict]) -> list[dict]:
+    """Sort a page's lines the way they are meant to be read.
+
+    pdfplumber returns lines top-to-bottom, so a two-column page comes back as
+    left-1, right-1, left-2, right-2 — every sentence interleaved with the one
+    beside it. Where a vertical gutter runs through a block of lines, the lines
+    on one side are emitted before the lines on the other; where there is no
+    gutter, the original order is kept untouched.
+    """
+    ordered: list[dict] = []
+    block = _text_block(lines)
+    if block is None:
+        return list(lines)
+    left, right = block
+    span = right - left
+    segment: list[dict] = []
+    for ln in sorted(lines, key=lambda l: (l.get("top", 0.0), l.get("x0", 0.0))):
+        if _spans_measure(ln, span):
+            ordered.extend(_split_columns(segment, span))
+            ordered.append(ln)
+            segment = []
+        else:
+            segment.append(ln)
+    ordered.extend(_split_columns(segment, span))
+    return ordered
+
+
+def _text_block(lines: list[dict]) -> tuple[float, float] | None:
+    xs = [(float(l.get("x0", 0.0)), float(l.get("x1", 0.0))) for l in lines if l.get("text")]
+    if not xs:
+        return None
+    return min(x0 for x0, _ in xs), max(x1 for _, x1 in xs)
+
+
+def _spans_measure(line: dict, span: float) -> bool:
+    width = float(line.get("x1", 0.0)) - float(line.get("x0", 0.0))
+    return span > 0 and width >= span * _SPANNING_FRAC
+
+
+def _split_columns(lines: list[dict], span: float, depth: int = 0) -> list[dict]:
+    """Emit `lines` column by column, recursing so three columns also work."""
+    if depth >= _MAX_COLUMN_DEPTH or len(lines) < _MIN_COLUMN_LINES * 2:
+        return lines
+    gutter = _widest_gutter(lines, span)
+    if gutter is None:
+        return lines
+    left = [l for l in lines if float(l.get("x1", 0.0)) <= gutter]
+    right = [l for l in lines if float(l.get("x1", 0.0)) > gutter]
+    if len(left) < _MIN_COLUMN_LINES or len(right) < _MIN_COLUMN_LINES:
+        return lines
+    return (_split_columns(left, span, depth + 1) + _split_columns(right, span, depth + 1))
+
+
+def _widest_gutter(lines: list[dict], span: float) -> float | None:
+    """The x of the widest vertical gap no line crosses, if it is wide enough."""
+    intervals = sorted((float(l.get("x0", 0.0)), float(l.get("x1", 0.0))) for l in lines)
+    best_gap, best_x = 0.0, None
+    reach = intervals[0][1]
+    for x0, x1 in intervals[1:]:
+        if x0 - reach > best_gap:
+            best_gap, best_x = x0 - reach, (reach + x0) / 2
+        reach = max(reach, x1)
+    if best_x is None or best_gap < span * _MIN_GUTTER_FRAC:
+        return None
+    return best_x
+
+
 def reflow_narrative(pages: list[dict], *, band: float = 0.12) -> str:
     """Strip running headers/footers + page numbers and merge paragraphs.
 
@@ -233,7 +313,7 @@ def reflow_narrative(pages: list[dict], *, band: float = 0.12) -> str:
     paragraphs: list[str] = []
     cur = ""
     for page in pages:
-        for ln in page.get("lines") or []:
+        for ln in reading_order(page.get("lines") or []):
             text = (ln.get("text") or "").strip()
             if not text:
                 continue
@@ -291,15 +371,6 @@ def _parse_pages(pdf, fallback: str | None = "column-geometry",
             "tables": [],
         }
         try:
-            for ln in page.extract_text_lines(strip=True):
-                rep["lines"].append({
-                    "text": ln.get("text", ""), "x0": ln.get("x0", 0.0),
-                    "x1": ln.get("x1", 0.0), "top": ln.get("top", 0.0),
-                    "bottom": ln.get("bottom", 0.0),
-                })
-        except Exception as exc:  # noqa: BLE001
-            log.debug("extract_text_lines failed on p%s: %s", page.page_number, exc)
-        try:
             for tbl in page.find_tables():
                 col_x = []
                 try:
@@ -330,6 +401,25 @@ def _parse_pages(pdf, fallback: str | None = "column-geometry",
                 # fallback None: Docling supplies these pages at document level
             except Exception as exc:  # noqa: BLE001
                 log.debug("fallback table detection failed on p%s: %s", page.page_number, exc)
+        try:
+            # A column-set page has to be separated before its lines are formed:
+            # pdfplumber groups by y, which welds the two columns of every line
+            # together. Pages that produced a table are left alone — their gap is
+            # between a label and its figures — and single-column pages come back
+            # None and keep pdfplumber's own grouping.
+            from .pdf_columns import column_aware_lines
+
+            lines = None if rep["tables"] else column_aware_lines(page)
+            if lines is None:
+                lines = page.extract_text_lines(strip=True)
+            for ln in lines:
+                rep["lines"].append({
+                    "text": ln.get("text", ""), "x0": ln.get("x0", 0.0),
+                    "x1": ln.get("x1", 0.0), "top": ln.get("top", 0.0),
+                    "bottom": ln.get("bottom", 0.0),
+                })
+        except Exception as exc:  # noqa: BLE001
+            log.debug("line extraction failed on p%s: %s", page.page_number, exc)
         pages.append(rep)
     return pages
 
@@ -348,6 +438,24 @@ def _docling_tables(content: bytes):
     except Exception as exc:  # noqa: BLE001
         log.warning("docling conversion failed, falling back to the built-in detectors: %s", exc)
         return None
+
+
+def parse_pdf_pages(content: bytes, fallback: str | None = "column-geometry") -> list[dict]:
+    """Page dicts (lines + tables) for a PDF, the shape the pure functions consume."""
+    import pdfplumber
+
+    with pdfplumber.open(io.BytesIO(content)) as pdf:
+        return _parse_pages(pdf, fallback)
+
+
+def reflow_pdf(content: bytes) -> str | None:
+    """Narrative text of a PDF: headers and page numbers gone, paragraphs whole.
+
+    The same treatment the structured pass gives, available without asking for
+    table extraction — page furniture and one-line-per-line breaks are a problem
+    for anything reading the text, not only for table work.
+    """
+    return reflow_narrative(parse_pdf_pages(content)) or None
 
 
 def _page_text_map(pages: list[dict]) -> dict[int, str]:
