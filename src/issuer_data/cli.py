@@ -215,6 +215,44 @@ def cmd_query(args) -> int:
     return 0
 
 
+def cmd_eval(args) -> int:
+    import json as _json
+
+    from .eval.harness import default_cases, run_eval
+
+    settings = get_settings()
+    cases = default_cases(args.gold_dir)
+    if not cases:
+        print("No gold cases (install reportlab for synthetic cases, or add "
+              f"labelled cases under {args.gold_dir}/).")
+        return 0
+    escalator = None
+    if args.escalate:
+        from .pdf_escalate import build_escalator
+
+        escalator = build_escalator(settings)
+    report = run_eval(cases, escalator=escalator,
+                      threshold=settings.pdf_confidence_threshold,
+                      cost_per_page=settings.escalation_cost_per_page)
+    if args.json:
+        print(_json.dumps(report, ensure_ascii=False, indent=2))
+        return 0
+    print(f"{'category':28} {'TEDS':>6} {'GriTS':>6} {'num-EM':>7} {'contin':>7}")
+    for cat, m in sorted(report["categories"].items()):
+        print(f"{cat:28} {_fmt(m['teds'])} {_fmt(m['grits'])} "
+              f"{_fmt(m['numeric_em']):>7} {_fmt(m['continuity']):>7}")
+    o = report["overall"]
+    print(f"{'OVERALL':28} {_fmt(o['teds'])} {_fmt(o['grits'])} "
+          f"{_fmt(o['numeric_em']):>7} {_fmt(o['continuity']):>7}")
+    print(f"\ncases: {report['n_cases']}  escalated: {report['escalated_total']}  "
+          f"est. cost: ${report['est_cost_total']:.3f}")
+    return 0
+
+
+def _fmt(v) -> str:
+    return f"{v:6.3f}" if isinstance(v, (int, float)) else f"{'—':>6}"
+
+
 # ------------------------------------------------------------------------- parser
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="issuer-data", description=__doc__)
@@ -265,6 +303,14 @@ def build_parser() -> argparse.ArgumentParser:
     q = sub.add_parser("query", help="run a read-only SQL query")
     q.add_argument("--sql", required=True)
     q.set_defaults(func=cmd_query)
+
+    ev = sub.add_parser("eval", help="score PDF extraction accuracy on the gold set")
+    ev.add_argument("--gold-dir", default="data/eval",
+                    help="dir of real labelled cases <name>/{doc.pdf,expected.json}")
+    ev.add_argument("--json", action="store_true", help="emit the full report as JSON")
+    ev.add_argument("--escalate", action="store_true",
+                    help="also run configured escalation and report lift/cost")
+    ev.set_defaults(func=cmd_eval)
 
     return p
 
