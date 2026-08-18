@@ -74,3 +74,60 @@ def test_documents_ocr_fallback_when_enabled(conn, tmp_path, monkeypatch):
     row = conn.execute("SELECT text_content, doc_format FROM filing_documents").fetchone()
     assert row["doc_format"] == "pdf"
     assert row["text_content"] and "2024" in row["text_content"]  # OCR filled it
+
+
+def test_ocr_is_enabled_by_default():
+    """An image-only PDF is otherwise stored with no text at all, so OCR is on."""
+    from issuer_data.config import Settings
+
+    assert Settings(_env_file=None).ocr_enabled is True
+
+
+def test_ocr_runs_without_being_asked_for(conn, tmp_path, monkeypatch):
+    if not ocr_available():
+        pytest.skip("Tesseract/PyMuPDF not installed")
+    from issuer_data import documents
+    from issuer_data.config import Settings
+    from issuer_data.models import Company, Filing, Security
+    from issuer_data.storage.repository import Repository
+
+    # No ocr_enabled=True here: the default has to carry it.
+    settings = Settings(_env_file=None, docs_dir=tmp_path, ocr_languages="eng")
+    repo = Repository(conn)
+    cid = repo.resolve_company(Company(name="ACME", cik="1", source="edgar"))
+    repo.upsert_security(Security(market="US", symbol="ACME", source="edgar"), cid)
+    repo.upsert_filings(cid, [Filing(symbol="ACME", market="US", filing_id="f1",
+                                     url="http://x/scan.pdf", source="edgar")])
+    repo.commit()
+
+    pdf = _image_only_pdf("DEFAULT OCR 2026")
+
+    class _Resp:
+        content = pdf
+        headers = {"Content-Type": "application/pdf"}
+
+    monkeypatch.setattr(documents, "_client", lambda s: type("C", (), {
+        "get": lambda self, url, headers=None: _Resp()})())
+    documents.backfill_documents(conn, settings, ["US:ACME"], None, None)
+
+    row = conn.execute("SELECT text_content FROM filing_documents").fetchone()
+    assert row["text_content"] and "2026" in row["text_content"]
+
+
+def test_missing_engine_warns_once_with_install_instructions(caplog, monkeypatch):
+    """Enabled-by-default OCR that cannot run must say so — once, not per page."""
+    import logging
+
+    from issuer_data import pdf_ocr
+
+    pdf_ocr.ocr_ready.cache_clear()
+    monkeypatch.setattr(pdf_ocr, "ocr_available", lambda: False)
+    with caplog.at_level(logging.WARNING):
+        assert pdf_ocr.ocr_ready() is False
+        assert pdf_ocr.ocr_ready() is False  # cached: still one warning
+    pdf_ocr.ocr_ready.cache_clear()
+
+    warnings = [r for r in caplog.records if "OCR is enabled but unavailable" in r.message]
+    assert len(warnings) == 1
+    assert "apt install tesseract-ocr" in caplog.text
+    assert "--no-ocr" in caplog.text

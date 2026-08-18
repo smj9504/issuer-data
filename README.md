@@ -126,11 +126,20 @@ DART's `document.xml` endpoint returns a ZIP under a Content-Type of
 under the extension they really are. A document that downloads but yields no text is
 logged and counted in the run summary rather than stored as a silent `text_chars=0`.
 
-Scanned/image-only PDFs yield no text layer. Pass `--ocr` (with `--download-docs` or
-`download-docs`) to render each page and OCR it with Tesseract — multilingual
-(`eng+kor+chi_tra` by default), so Korean/English/Traditional-Chinese scans all recover
-text into `text_content`. OCR needs the Tesseract binary + `pip install '.[ocr]'`
-(PyMuPDF/pytesseract/Pillow); it is off unless `--ocr` or `ISSUER_OCR_ENABLED=true` is set.
+Scanned/image-only PDFs yield no text layer, so **OCR runs by default**: each such page
+is rendered and passed through Tesseract — multilingual (`eng+kor+chi_tra` by default),
+so Korean/English/Traditional-Chinese scans all recover text into `text_content`. Turn it
+off per run with `--no-ocr`, or globally with `ISSUER_OCR_ENABLED=false`.
+
+PyMuPDF/pytesseract/Pillow install with the package, but the Tesseract engine is a system
+package:
+
+```bash
+apt install tesseract-ocr tesseract-ocr-kor tesseract-ocr-chi-tra
+```
+
+Without it OCR is skipped and logs one warning saying so — scanned PDFs are then recorded
+with no text rather than failing the run.
 
 ### Structured PDF extraction (`--extract-tables`)
 

@@ -24,6 +24,11 @@ dependencies = [
     "OpenDartReader>=0.2.2",
     "pdfplumber>=0.11",
     "olefile>=0.46",
+    # OCR of image-only PDFs is on by default, so its Python side is not optional.
+    # Tesseract itself is a system package — see the `ocr` extra's note below.
+    "pymupdf>=1.24",
+    "pytesseract>=0.3.10",
+    "Pillow>=10.0",
     "beautifulsoup4>=4.12",
     "lxml>=5.2",
 ]
@@ -34,8 +39,9 @@ dev = [
     "ruff>=0.5",
     "reportlab>=4.0",   # builds synthetic PDFs for the structured-extraction test
 ]
-# OCR for scanned/image-only PDFs. Also needs the Tesseract binary on the system
-# (e.g. `apt install tesseract-ocr tesseract-ocr-kor tesseract-ocr-chi-tra`).
+# Kept so `pip install '.[ocr]'` still resolves; these moved into the runtime
+# dependencies when OCR became the default. The Tesseract binary is still a system
+# package: `apt install tesseract-ocr tesseract-ocr-kor tesseract-ocr-chi-tra`.
 ocr = [
     "pymupdf>=1.24",    # render PDF pages to images
     "pytesseract>=0.3.10",

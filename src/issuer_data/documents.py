@@ -269,17 +269,19 @@ def _download_one(
             log.warning("structured PDF extract failed %s: %s", url, exc)
     if text is None:
         text = extract_text(content, fmt)
-    if not text and fmt == "pdf" and getattr(settings, "ocr_enabled", False):
-        # No text layer (scanned/image-only PDF) → OCR fallback.
-        try:
-            from .pdf_ocr import ocr_pdf
+    if not text and fmt == "pdf" and getattr(settings, "ocr_enabled", True):
+        # No text layer (scanned/image-only PDF) → OCR fallback. ocr_ready() warns
+        # once if the engine is missing instead of once per page of every scan.
+        from .pdf_ocr import ocr_pdf, ocr_ready
 
-            text = ocr_pdf(content, settings.ocr_languages, settings.ocr_dpi,
-                           settings.ocr_max_pages)
-            if text:
-                log.info("OCR recovered %d chars for %s", len(text), url)
-        except Exception as exc:  # noqa: BLE001
-            log.warning("OCR failed %s: %s", url, exc)
+        if ocr_ready():
+            try:
+                text = ocr_pdf(content, settings.ocr_languages, settings.ocr_dpi,
+                               settings.ocr_max_pages)
+                if text:
+                    log.info("OCR recovered %d chars for %s", len(text), url)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("OCR failed %s: %s", url, exc)
     if text and len(text) > _MAX_TEXT:
         text = text[:_MAX_TEXT]
     if not text:

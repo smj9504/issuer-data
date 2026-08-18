@@ -46,8 +46,8 @@ def cmd_collect(args) -> int:
     from .orchestrator import Orchestrator
 
     settings = get_settings()
-    if getattr(args, "ocr", False):
-        settings.ocr_enabled = True
+    if getattr(args, "ocr", None) is not None:
+        settings.ocr_enabled = args.ocr
     conn = connect(settings.db_path)
     orch = Orchestrator(conn, settings)
     symbols = _split_csv(args.symbols)
@@ -99,8 +99,8 @@ def cmd_download_docs(args) -> int:
     from .documents import backfill_documents
 
     settings = get_settings()
-    if getattr(args, "ocr", False):
-        settings.ocr_enabled = True
+    if getattr(args, "ocr", None) is not None:
+        settings.ocr_enabled = args.ocr
     conn = connect(settings.db_path)
     try:
         n = backfill_documents(conn, settings, _split_csv(args.symbols),
@@ -281,9 +281,9 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--extract-tables", action="store_true",
                    help="with --download-docs: run the structured PDF engine "
                         "(cross-page-stitched tables + reflowed narrative)")
-    c.add_argument("--ocr", action="store_true",
+    c.add_argument("--ocr", action=argparse.BooleanOptionalAction, default=None,
                    help="OCR scanned/image-only PDFs that have no text layer "
-                        "(needs Tesseract + PyMuPDF)")
+                        "(on by default; --no-ocr disables it)")
     c.set_defaults(func=cmd_collect)
 
     d = sub.add_parser("download-docs", help="backfill original documents for stored filings")
@@ -292,8 +292,8 @@ def build_parser() -> argparse.ArgumentParser:
     d.add_argument("--limit", type=int, help="cap number of filings")
     d.add_argument("--extract-tables", action="store_true",
                    help="run the structured PDF engine (stitched tables + reflow)")
-    d.add_argument("--ocr", action="store_true",
-                   help="OCR scanned/image-only PDFs (needs Tesseract + PyMuPDF)")
+    d.add_argument("--ocr", action=argparse.BooleanOptionalAction, default=None,
+                   help="OCR scanned/image-only PDFs (on by default; --no-ocr disables it)")
     d.set_defaults(func=cmd_download_docs)
 
     lk = sub.add_parser("link", help="link cross-listed symbols onto one company")
