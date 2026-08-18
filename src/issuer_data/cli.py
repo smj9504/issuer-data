@@ -69,6 +69,7 @@ def cmd_collect(args) -> int:
                     end=args.end,
                     limit=args.limit,
                     download_docs=args.download_docs,
+                    extract_tables=args.extract_tables,
                 )
     finally:
         conn.close()
@@ -100,7 +101,7 @@ def cmd_download_docs(args) -> int:
     try:
         n = backfill_documents(conn, settings, _split_csv(args.symbols),
                                _markets(args.market) if args.market != "all" else None,
-                               args.limit)
+                               args.limit, extract_tables=args.extract_tables)
     finally:
         conn.close()
     print(f"Downloaded/updated {n} documents")
@@ -235,12 +236,17 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--limit", type=int, help="cap number of securities (smoke tests)")
     c.add_argument("--download-docs", action="store_true",
                    help="with --type filings: also download originals + extract text")
+    c.add_argument("--extract-tables", action="store_true",
+                   help="with --download-docs: run the structured PDF engine "
+                        "(cross-page-stitched tables + reflowed narrative)")
     c.set_defaults(func=cmd_collect)
 
     d = sub.add_parser("download-docs", help="backfill original documents for stored filings")
     d.add_argument("--market", choices=MARKET_CHOICES, default="all")
     d.add_argument("--symbols", help="comma-separated symbols")
     d.add_argument("--limit", type=int, help="cap number of filings")
+    d.add_argument("--extract-tables", action="store_true",
+                   help="run the structured PDF engine (stitched tables + reflow)")
     d.set_defaults(func=cmd_download_docs)
 
     lk = sub.add_parser("link", help="link cross-listed symbols onto one company")

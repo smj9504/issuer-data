@@ -106,6 +106,27 @@ CREATE TABLE IF NOT EXISTS filing_documents (   -- downloaded originals + extrac
         REFERENCES filings(company_id, filing_id, source) ON DELETE CASCADE
 );
 
+-- Structured tables extracted from filing PDFs (cross-page-stitched). Long/tidy:
+-- one row per cell. confidence = fraction of the table's numbers grounded in the
+-- raw text layer; source_engine names the extractor for provenance.
+CREATE TABLE IF NOT EXISTS filing_tables (
+    company_id    INTEGER NOT NULL REFERENCES companies(company_id) ON DELETE CASCADE,
+    filing_id     TEXT NOT NULL,
+    source        TEXT NOT NULL,
+    doc_seq       INTEGER NOT NULL DEFAULT 0,
+    table_seq     INTEGER NOT NULL,        -- 0..N tables within the document
+    row_idx       INTEGER NOT NULL,
+    col_idx       INTEGER NOT NULL,
+    value         TEXT,
+    page_start    INTEGER,
+    page_end      INTEGER,                 -- > page_start when the table was stitched
+    confidence    REAL,
+    source_engine TEXT,
+    PRIMARY KEY (company_id, filing_id, source, doc_seq, table_seq, row_idx, col_idx)
+);
+CREATE INDEX IF NOT EXISTS idx_filing_tables_doc
+    ON filing_tables(company_id, filing_id, source, doc_seq);
+
 -- Daily FX for local <-> USD normalization ------------------------------------
 -- rate_type 'spot' = daily close; 'avg' = mean of daily spot over a fiscal period
 -- (rate_date = that period's period_end). Accounting-correct USD conversion uses

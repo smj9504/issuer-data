@@ -130,12 +130,13 @@ def _zip_text(content: bytes) -> str | None:
 def _download_one(
     client: HttpClient, settings: Settings, company_id: int, filing_id: str,
     source: str, doc_seq: int, url: str, market: str, symbol: str,
-) -> FilingDocument | None:
+    extract_tables: bool = False,
+) -> tuple[FilingDocument | None, list]:
     try:
         resp = client.get(url, headers=_headers_for(url, settings))
     except Exception as exc:  # noqa: BLE001
         log.warning("download failed %s: %s", url, exc)
-        return None
+        return None, []
     content = resp.content
     fmt = _format_from(url, resp.headers.get("Content-Type"))
     filename = _filename_from(url, doc_seq, fmt)
@@ -143,7 +144,20 @@ def _download_one(
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest = dest_dir / filename
     dest.write_bytes(content)
-    text = extract_text(content, fmt)
+    tables: list = []
+    text: str | None = None
+    if extract_tables and fmt == "pdf":
+        # Structured pass: cross-page-stitched tables + reflowed narrative.
+        try:
+            from .pdf_extract import extract_structured
+
+            doc = extract_structured(content)
+            tables = doc.tables
+            text = doc.text or None
+        except Exception as exc:  # noqa: BLE001
+            log.warning("structured PDF extract failed %s: %s", url, exc)
+    if text is None:
+        text = extract_text(content, fmt)
     if text and len(text) > _MAX_TEXT:
         text = text[:_MAX_TEXT]
     return FilingDocument(
@@ -158,11 +172,12 @@ def _download_one(
         text_content=text,
         text_chars=len(text) if text else 0,
         downloaded_at=today_iso(),
-    )
+    ), tables
 
 
 def download_filing_documents(
-    repo: Repository, settings: Settings, company_id: int, filings: list[Filing]
+    repo: Repository, settings: Settings, company_id: int, filings: list[Filing],
+    extract_tables: bool = False,
 ) -> int:
     """Download originals + extract text for a list of freshly collected filings."""
     client = _client(settings)
@@ -174,10 +189,12 @@ def download_filing_documents(
         for seq, url in enumerate(urls):
             if not url:
                 continue
-            doc = _download_one(client, settings, company_id, fl.filing_id, fl.source,
-                                seq, url, market, symbol)
+            doc, tables = _download_one(client, settings, company_id, fl.filing_id, fl.source,
+                                        seq, url, market, symbol, extract_tables)
             if doc is not None:
                 repo.upsert_filing_document(doc)
+                if tables:
+                    repo.upsert_filing_tables(company_id, fl.filing_id, fl.source, seq, tables)
                 n += 1
         repo.commit()
     log.info("documents: downloaded %d files for company %s (%s:%s)", n, company_id, market, symbol)
@@ -190,6 +207,7 @@ def backfill_documents(
     symbols: list[str] | None,
     markets: list[str] | None,
     limit: int | None,
+    extract_tables: bool = False,
 ) -> int:
     """Download originals for stored filings that have no documents yet."""
     repo = Repository(conn)
@@ -212,10 +230,12 @@ def backfill_documents(
         url = row["url"]
         if not url:
             continue
-        doc = _download_one(client, settings, cid, row["filing_id"], row["source"],
-                            0, url, market, symbol)
+        doc, tables = _download_one(client, settings, cid, row["filing_id"], row["source"],
+                                    0, url, market, symbol, extract_tables)
         if doc is not None:
             repo.upsert_filing_document(doc)
+            if tables:
+                repo.upsert_filing_tables(cid, row["filing_id"], row["source"], 0, tables)
             n += 1
             repo.commit()
     return n

@@ -62,6 +62,7 @@ class Orchestrator:
         end: str | None = None,
         limit: int | None = None,
         download_docs: bool = False,
+        extract_tables: bool = False,
     ) -> int:
         market = market.upper()
         src = source or default_source(market, data_type)
@@ -81,7 +82,8 @@ class Orchestrator:
             elif data_type == "financials":
                 rows = self._collect_financials(collector, market, symbols)
             elif data_type == "filings":
-                rows = self._collect_filings(collector, market, symbols, start, end, download_docs)
+                rows = self._collect_filings(collector, market, symbols, start, end,
+                                             download_docs, extract_tables)
             else:
                 raise ValueError(f"Unknown data_type {data_type}")
             self.repo.finish_run(run_id, "ok", rows)
@@ -146,7 +148,8 @@ class Orchestrator:
             log.info("financials %s:%s -> %d facts", market, sym, n)
         return total
 
-    def _collect_filings(self, collector, market, symbols, start, end, download_docs) -> int:
+    def _collect_filings(self, collector, market, symbols, start, end, download_docs,
+                         extract_tables=False) -> int:
         start, end = default_range(start, end, default_years=2)
         symbols = self._resolve_symbols(market, symbols)
         self.ensure_master(market, symbols)
@@ -174,7 +177,8 @@ class Orchestrator:
             from .documents import download_filing_documents
 
             for cid, filings in pending:
-                download_filing_documents(self.repo, self.settings, cid, filings)
+                download_filing_documents(self.repo, self.settings, cid, filings,
+                                          extract_tables=extract_tables)
         return total
 
     # --------------------------------------------------------------- coverage

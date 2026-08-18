@@ -237,6 +237,29 @@ class Repository:
              doc.text_chars, doc.downloaded_at),
         )
 
+    def upsert_filing_tables(self, company_id: int, filing_id: str, source: str,
+                             doc_seq: int, tables) -> int:
+        """Persist stitched tables (one row per cell). Replaces any prior extraction
+        for this (company, filing, source, doc_seq) so re-runs stay idempotent."""
+        self._exec(
+            "DELETE FROM filing_tables WHERE company_id=? AND filing_id=? AND source=? "
+            "AND doc_seq=?", (company_id, filing_id, source, doc_seq),
+        )
+        n = 0
+        for table_seq, tbl in enumerate(tables):
+            for row_idx, row in enumerate(tbl.rows):
+                for col_idx, value in enumerate(row):
+                    self._exec(
+                        "INSERT INTO filing_tables(company_id, filing_id, source, doc_seq, "
+                        "table_seq, row_idx, col_idx, value, page_start, page_end, "
+                        "confidence, source_engine) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                        (company_id, filing_id, source, doc_seq, table_seq, row_idx,
+                         col_idx, value, tbl.page_start, tbl.page_end, tbl.confidence,
+                         tbl.source_engine),
+                    )
+                    n += 1
+        return n
+
     def filings_without_documents(self, company_id: int | None = None, limit: int | None = None):
         sql = (
             "SELECT f.company_id, f.filing_id, f.source, f.url, f.filing_type "

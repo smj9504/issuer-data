@@ -100,7 +100,8 @@ Two-tier entity model for cross-listing:
   attach here; many securities → one company.
 - **`identifier_xref`** — crosswalk so any source resolves to the right `company_id`.
 - **`prices`**, **`financials`** (long/tidy), **`filings`**, **`filing_documents`**
-  (original file + extracted text), **`fx_rates`**, **`company_peers`**, `collection_runs`.
+  (original file + extracted text), **`filing_tables`** (structured PDF tables, one row per
+  cell), **`fx_rates`**, **`company_peers`**, `collection_runs`.
 - Views: **`v_latest_price`** (latest close, local + USD via nearest-prior FX),
   **`v_company_overview`** (one row per company with all its listings).
 
@@ -119,6 +120,33 @@ text into `filing_documents.text_content`:
 
 Scanned/image-only PDFs yield no text (`text_content` is NULL, `text_chars`=0); OCR is a
 possible future add-on.
+
+### Structured PDF extraction (`--extract-tables`)
+
+Add `--extract-tables` to `--download-docs` (or to `download-docs`) to run a
+template-, country-, and language-agnostic structured pass on PDFs. The logic is
+geometry-based, so it works on Korean/US/HK annual reports and government filings alike:
+
+```bash
+python -m issuer_data collect --market hk --type filings --symbols 00700 \
+    --download-docs --extract-tables
+```
+
+- **Cross-page table stitching** — a table broken by a page break is rejoined when the
+  previous page's table ends at the bottom margin, the next page's starts at the top
+  margin, and their column x-signatures match; a repeated header row on the continuation
+  is dropped. Cells land in **`filing_tables`** (one row per cell, with `page_start`/
+  `page_end` and a `source_engine`).
+- **Narrative reflow** — running headers/footers and page numbers (found by recurrence
+  across pages, not a pattern list) are removed, line-end hyphenation is joined, and
+  paragraphs split across lines/pages are merged into continuous text (CJK joined without
+  inserted spaces). The reflowed text replaces the flat per-page blob in `text_content`.
+- **Numeric grounding** — every number emitted in a table is checked against the raw text
+  layer; the grounded fraction is stored as `filing_tables.confidence`, an
+  anti-hallucination guard and the signal a later paid-engine escalation keys on.
+
+The front-end uses `pdfplumber`; heavier local layout engines (Docling / Table Transformer)
+and optional paid escalation for the low-confidence tail are a later add-on.
 
 ## Development
 
