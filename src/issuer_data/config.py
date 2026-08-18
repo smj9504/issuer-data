@@ -57,6 +57,14 @@ class Settings(BaseSettings):
     escalation_model: str = "claude-sonnet-4-5"
     escalation_cost_per_page: float = 0.02   # for the cost-accounting log only
 
+    # --- ML table detection (optional, local, free) -------------------------
+    # Microsoft Table Transformer / IBM Docling — both MIT and run on-box, but
+    # they drag in torch and cost seconds per page, so the built-in ruled and
+    # geometry detectors stay the default and this is opted into per run.
+    pdf_ml_tables: bool = False
+    pdf_ml_engine: str = "table-transformer"   # or "docling"
+    pdf_ml_dpi: int = 150
+
     # --- OCR (scanned PDFs) -------------------------------------------------
     # On by default: an image-only PDF is a document we would otherwise store with
     # no text at all, so a page with no text layer is rendered and OCR'd. The

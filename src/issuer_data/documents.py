@@ -259,6 +259,8 @@ def _download_one(
                 content, escalator=escalator,
                 threshold=settings.pdf_confidence_threshold,
                 cost_per_page=settings.escalation_cost_per_page,
+                ml_engine=(settings.pdf_ml_engine if settings.pdf_ml_tables else None),
+                ml_dpi=settings.pdf_ml_dpi,
             )
             tables = doc.tables
             text = doc.text or None

@@ -177,8 +177,33 @@ python -m issuer_data collect --market hk --type filings --symbols 00700 \
   and is the signal escalation keys on; tables below the threshold are marked
   `filing_tables.needs_review=1`.
 
-The front-end uses `pdfplumber` plus the geometry pass above; heavier local layout engines
-(Docling / Table Transformer) are a later add-on.
+#### Optional local ML detectors (free, no API)
+
+The two built-in detectors are geometry only. For harder layouts, `--ml-tables` swaps the
+geometry pass for a model on the pages the ruled pass left empty:
+
+```bash
+pip install '.[ml]'          # torch + transformers + docling, several GB
+python -m issuer_data collect --market hk --type filings --symbols 00700 \
+    --download-docs --extract-tables --ml-engine table-transformer
+```
+
+- `table-transformer` — Microsoft's [Table Transformer](https://github.com/microsoft/table-transformer)
+  (MIT). Detects the table, then its rows and columns, per page.
+- `docling` — IBM's [Docling](https://github.com/docling-project/docling) (MIT). Converts
+  the whole document at once, so its tables are merged back in by page number.
+
+Both are **free and run on this machine** — no API key, no per-page charge, unrelated to
+the paid escalation below. The cost is weight: several GB of wheels and model files, and
+inference measured in seconds per page instead of milliseconds. So the tier is off by
+default, and if the extra is not installed the run logs one warning and falls back to the
+built-in detectors rather than failing.
+
+In both cases the **text still comes from the PDF's own text layer** — the model is asked
+only where the cell boundaries are, so filed numbers stay byte-exact and nothing is
+introduced by an OCR pass.
+
+The front-end is `pdfplumber` plus the geometry pass; the ML tier above is opt-in.
 
 #### Optional paid escalation (off + local-only by default)
 

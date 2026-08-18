@@ -47,6 +47,16 @@ ocr = [
     "pytesseract>=0.3.10",
     "Pillow>=10.0",
 ]
+# Local ML table detection: Microsoft Table Transformer (via transformers) and
+# IBM Docling. Both MIT and free — no API and no per-page cost — but they pull
+# torch and several GB of wheels and weights, which is why they are an extra and
+# why the built-in ruled/geometry detectors remain the default.
+ml = [
+    "torch>=2.2",
+    "transformers>=4.40",
+    "timm>=1.0",            # the backbone Table Transformer's checkpoints need
+    "docling>=2.0",
+]
 
 [project.scripts]
 issuer-data = "issuer_data.cli:main"

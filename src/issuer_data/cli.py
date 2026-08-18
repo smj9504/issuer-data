@@ -48,6 +48,11 @@ def cmd_collect(args) -> int:
     settings = get_settings()
     if getattr(args, "ocr", None) is not None:
         settings.ocr_enabled = args.ocr
+    if getattr(args, "ml_tables", False):
+        settings.pdf_ml_tables = True
+    if getattr(args, "ml_engine", None):
+        settings.pdf_ml_engine = args.ml_engine
+        settings.pdf_ml_tables = True
     conn = connect(settings.db_path)
     orch = Orchestrator(conn, settings)
     symbols = _split_csv(args.symbols)
@@ -101,6 +106,11 @@ def cmd_download_docs(args) -> int:
     settings = get_settings()
     if getattr(args, "ocr", None) is not None:
         settings.ocr_enabled = args.ocr
+    if getattr(args, "ml_tables", False):
+        settings.pdf_ml_tables = True
+    if getattr(args, "ml_engine", None):
+        settings.pdf_ml_engine = args.ml_engine
+        settings.pdf_ml_tables = True
     conn = connect(settings.db_path)
     try:
         n = backfill_documents(conn, settings, _split_csv(args.symbols),
@@ -284,6 +294,11 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--ocr", action=argparse.BooleanOptionalAction, default=None,
                    help="OCR scanned/image-only PDFs that have no text layer "
                         "(on by default; --no-ocr disables it)")
+    c.add_argument("--ml-tables", action="store_true",
+                   help="use a local ML table detector on pages with no ruled table "
+                        "(needs `pip install '.[ml]'`; slower, no API cost)")
+    c.add_argument("--ml-engine", choices=("table-transformer", "docling"),
+                   help="which ML table detector to use (implies --ml-tables)")
     c.set_defaults(func=cmd_collect)
 
     d = sub.add_parser("download-docs", help="backfill original documents for stored filings")
@@ -294,6 +309,11 @@ def build_parser() -> argparse.ArgumentParser:
                    help="run the structured PDF engine (stitched tables + reflow)")
     d.add_argument("--ocr", action=argparse.BooleanOptionalAction, default=None,
                    help="OCR scanned/image-only PDFs (on by default; --no-ocr disables it)")
+    d.add_argument("--ml-tables", action="store_true",
+                   help="use a local ML table detector on pages with no ruled table "
+                        "(needs `pip install '.[ml]'`; slower, no API cost)")
+    d.add_argument("--ml-engine", choices=("table-transformer", "docling"),
+                   help="which ML table detector to use (implies --ml-tables)")
     d.set_defaults(func=cmd_download_docs)
 
     lk = sub.add_parser("link", help="link cross-listed symbols onto one company")

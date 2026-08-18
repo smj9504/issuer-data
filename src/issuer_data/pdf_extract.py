@@ -247,7 +247,8 @@ def ground_numbers(rows: list[list[str]], raw_text: str) -> float:
 
 
 # ----------------------------------------------------------------- pdf front-end
-def _parse_pages(pdf) -> list[dict]:
+def _parse_pages(pdf, fallback: str | None = "column-geometry",
+                 ml_dpi: int = 150) -> list[dict]:
     pages: list[dict] = []
     for page in pdf.pages:
         rep: dict = {
@@ -282,16 +283,39 @@ def _parse_pages(pdf) -> list[dict]:
         if not rep["tables"]:
             # No ruling lines here. Results announcements and annual reports hold
             # their columns apart with whitespace, so fall back to reconstructing
-            # the grid. Only on pages the ruled pass left empty, so a document it
+            # the grid — or to a model, when the ML tier is switched on. Either
+            # way only on pages the ruled pass left empty, so a document it
             # already handles cannot regress.
             try:
-                from .pdf_columns import find_column_tables
+                if fallback == "table-transformer":
+                    from .pdf_ml_tables import find_tatr_tables
 
-                rep["tables"].extend(find_column_tables(page))
+                    rep["tables"].extend(find_tatr_tables(page, dpi=ml_dpi))
+                elif fallback == "column-geometry":
+                    from .pdf_columns import find_column_tables
+
+                    rep["tables"].extend(find_column_tables(page))
+                # fallback None: Docling supplies these pages at document level
             except Exception as exc:  # noqa: BLE001
-                log.debug("column detection failed on p%s: %s", page.page_number, exc)
+                log.debug("fallback table detection failed on p%s: %s", page.page_number, exc)
         pages.append(rep)
     return pages
+
+
+def _ml_usable(engine: str) -> bool:
+    from .pdf_ml_tables import ml_ready
+
+    return ml_ready(engine)
+
+
+def _docling_tables(content: bytes):
+    from .pdf_ml_tables import find_docling_tables
+
+    try:
+        return find_docling_tables(content)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("docling conversion failed, falling back to the built-in detectors: %s", exc)
+        return None
 
 
 def _page_text_map(pages: list[dict]) -> dict[int, str]:
@@ -332,7 +356,8 @@ def apply_escalation(tables: list[StitchedTable], page_text: dict[int, str], raw
 
 
 def extract_structured(content: bytes, escalator=None, threshold: float = 0.66,
-                       cost_per_page: float = 0.0) -> StructuredDoc:
+                       cost_per_page: float = 0.0, ml_engine: str | None = None,
+                       ml_dpi: int = 150) -> StructuredDoc:
     """Parse a PDF into stitched tables + reflowed narrative with grounding.
 
     Tables below ``threshold`` grounding confidence are flagged ``needs_review``.
@@ -346,8 +371,28 @@ def extract_structured(content: bytes, escalator=None, threshold: float = 0.66,
     """
     import pdfplumber
 
+    if ml_engine and not _ml_usable(ml_engine):
+        ml_engine = None                    # warned once; fall back to the built-ins
+
+    docling_tables = None
+    if ml_engine == "docling":
+        docling_tables = _docling_tables(content)
+    # An engine that was asked for owns the non-ruled pages: running the geometry
+    # pass as well would fill those pages first and the requested engine's tables
+    # would never be reached.
+    fallback = {"table-transformer": "table-transformer",
+                "docling": None}.get(ml_engine, "column-geometry")
+    if ml_engine == "docling" and docling_tables is None:
+        fallback = "column-geometry"        # conversion failed; keep the built-in
+
     with pdfplumber.open(io.BytesIO(content)) as pdf:
-        pages = _parse_pages(pdf)
+        pages = _parse_pages(pdf, fallback, ml_dpi)
+    if docling_tables:
+        # Docling converts whole documents, so its tables arrive keyed by page
+        # rather than through the per-page hook.
+        for rep in pages:
+            if not rep["tables"]:
+                rep["tables"].extend(docling_tables.get(rep["page_no"], []))
     raw_text = "\n".join(ln["text"] for p in pages for ln in p["lines"])
     page_text = _page_text_map(pages)
     tables = stitch_tables(pages)
