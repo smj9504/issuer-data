@@ -30,6 +30,13 @@ dev = [
     "ruff>=0.5",
     "reportlab>=4.0",   # builds synthetic PDFs for the structured-extraction test
 ]
+# OCR for scanned/image-only PDFs. Also needs the Tesseract binary on the system
+# (e.g. `apt install tesseract-ocr tesseract-ocr-kor tesseract-ocr-chi-tra`).
+ocr = [
+    "pymupdf>=1.24",    # render PDF pages to images
+    "pytesseract>=0.3.10",
+    "Pillow>=10.0",
+]
 
 [project.scripts]
 issuer-data = "issuer_data.cli:main"

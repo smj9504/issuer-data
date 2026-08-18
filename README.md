@@ -118,8 +118,11 @@ text into `filing_documents.text_content`:
 - HTML/XML (SEC EDGAR / DART) → `BeautifulSoup` + `lxml`
 - DART XBRL ZIP → unzip then parse inner XML
 
-Scanned/image-only PDFs yield no text (`text_content` is NULL, `text_chars`=0); OCR is a
-possible future add-on.
+Scanned/image-only PDFs yield no text layer. Pass `--ocr` (with `--download-docs` or
+`download-docs`) to render each page and OCR it with Tesseract — multilingual
+(`eng+kor+chi_tra` by default), so Korean/English/Traditional-Chinese scans all recover
+text into `text_content`. OCR needs the Tesseract binary + `pip install '.[ocr]'`
+(PyMuPDF/pytesseract/Pillow); it is off unless `--ocr` or `ISSUER_OCR_ENABLED=true` is set.
 
 ### Structured PDF extraction (`--extract-tables`)
 
@@ -222,23 +225,25 @@ python -m issuer_data collect --market us --type ratios   --symbols AAPL   # nee
 | category | free source(s) implemented | notes |
 |----------|----------------------------|-------|
 | identifiers / LEI | SEC, DART, GLEIF | LEI via GLEIF (no key) |
-| market cap / shares | FMP | foreign-ownership % = KRX login only |
+| market cap / shares | FMP; **KRX** (KR listed-shares + **foreign-ownership %**) | KRX needs free KRX_ID/KRX_PW |
 | ratios / valuation | FMP (+ computed) | US strongest |
-| ownership (major/5%) | **DART** (majorstock 5%+) | US 13D/G has no free structured source → skipped |
+| ownership (major/5% + 13D/G) | **DART** (majorstock 5%+), **SEC 13D/13G** (free) | 13D/G = best-effort cover-page parse |
 | institutional (13F) | FMP | via FMP institutional-holder |
 | corporate actions | yfinance, FMP | free via Yahoo |
 | analyst / targets | FMP | US-centric |
 | insider trades | **SEC Form 4 (free)**, **DART** (임원·주요주주) | US: name/role/shares/price; KR: exec/major-holder reports |
 | earnings | **FMP** (earnings calendar) | US-centric |
 | news / sentiment | FMP | |
-| index membership | **FMP** (S&P 500 / Nasdaq 100 / Dow, US) | KR/HK not free → skipped |
+| index membership | **FMP** (S&P 500 / Nasdaq 100 / Dow), **KRX** (KOSPI200/KRX100/KOSDAQ150) | current snapshot; history not free |
 | ESG | FMP (tier-gated) | sustainability reports → documents |
 
 The first column lists only sources that are **actually wired** to a collector method; a
 `--type` with no implemented source for a market records a `skipped` run (never `ok` with
-0 rows) and writes nothing. Honest gaps (empty, logged — never fabricated): **US ownership
-(13D/G)**, **foreign-ownership %** (KRX login), **KR/HK index-membership history**,
-earnings-call transcripts, granular ESG grades.
+0 rows) and writes nothing. Remaining honest gaps (empty, logged — never fabricated):
+**index-membership history** (only the current snapshot is collected), earnings-call
+transcripts, and granular ESG grades. KR foreign-ownership % and KR index membership need
+a **free** KRX member login (`KRX_ID` / `KRX_PW`); US 13D/G is parsed heuristically from
+filing cover pages, so treat its shares/percent as best-effort.
 
 ## Notes & limitations
 

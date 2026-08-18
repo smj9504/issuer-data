@@ -48,6 +48,14 @@ class Settings(BaseSettings):
     escalation_model: str = "claude-sonnet-4-5"
     escalation_cost_per_page: float = 0.02   # for the cost-accounting log only
 
+    # --- OCR (scanned PDFs) -------------------------------------------------
+    # Off by default: OCR needs the Tesseract binary + PyMuPDF installed. When on,
+    # a PDF page with no text layer is rendered and OCR'd to recover its text.
+    ocr_enabled: bool = False
+    ocr_languages: str = "eng+kor+chi_tra"   # Tesseract lang codes, '+'-joined
+    ocr_dpi: int = 300
+    ocr_max_pages: int = 50                   # cap pages OCR'd per document
+
     # --- HTTP / rate limiting ----------------------------------------------
     http_timeout: float = 30.0
     max_retries: int = 4

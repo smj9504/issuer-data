@@ -132,3 +132,33 @@ def test_form4_xml_url_strips_render_dir(monkeypatch):
     c = _collector(monkeypatch, {})
     url = c._form4_xml_url("https://sec.gov/x/000/acc", "xslF345X06/form4.xml")
     assert url == "https://sec.gov/x/000/acc/form4.xml"  # render-dir stripped
+
+
+SC13G_HTML = b"""<html><body>
+<p>SCHEDULE 13G</p>
+<table>
+<tr><td>NAME OF REPORTING PERSONS</td></tr>
+<tr><td>The Vanguard Group</td></tr>
+<tr><td>AGGREGATE AMOUNT BENEFICIALLY OWNED BY EACH REPORTING PERSON</td></tr>
+<tr><td>1,234,567</td></tr>
+<tr><td>PERCENT OF CLASS REPRESENTED BY AMOUNT IN ROW (11)</td></tr>
+<tr><td>8.4%</td></tr>
+</table>
+</body></html>"""
+
+
+def test_parse_13dg_cover_page(monkeypatch):
+    c = _collector(monkeypatch, {})
+    monkeypatch.setattr(c.client, "get_bytes", lambda url, **kw: SC13G_HTML)
+    row = c._parse_13dg("http://x/sc13g.htm", "AAPL", "2024-02-14", "acc-9", "SC 13G")
+    assert row is not None
+    assert row.holder_name == "The Vanguard Group"
+    assert row.pct == 8.4
+    assert row.shares == 1234567.0
+    assert row.holder_type == "SC 13G"
+
+
+def test_parse_13dg_skips_empty(monkeypatch):
+    c = _collector(monkeypatch, {})
+    monkeypatch.setattr(c.client, "get_bytes", lambda url, **kw: b"<html><body>nothing</body></html>")
+    assert c._parse_13dg("http://x/x.htm", "AAPL", "2024-01-01", "a", "SC 13D") is None

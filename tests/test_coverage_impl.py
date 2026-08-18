@@ -2,8 +2,10 @@
 
 import pandas as pd
 
+from issuer_data.collectors.base import NotSupportedError
 from issuer_data.collectors.fmp import FmpCollector
 from issuer_data.collectors.kr_dart import DartCollector
+from issuer_data.collectors.kr_krx import KrxCollector
 from issuer_data.config import Settings
 
 
@@ -121,3 +123,56 @@ def test_dart_insiders_date_filter():
     ]))
     rows = c.fetch_insiders("005930", "2024-01-01", "2024-12-31")
     assert rows == []
+
+
+# -------------------------------------------------------------------- KRX
+def _krx():
+    c = object.__new__(KrxCollector)  # bypass __init__ (no pykrx import/login)
+    c.settings = None
+
+    class _Stock:
+        pass
+    c.stock = _Stock()
+    return c
+
+
+def test_krx_foreign_ownership():
+    c = _krx()
+    df = pd.DataFrame(
+        {"상장주식수": [5969782550], "지분율": [53.12], "한도소진율": [53.12]},
+        index=["005930"])
+
+    def _by_ticker(date, market, balance_limit=False):
+        return df if market == "KOSPI" else pd.DataFrame()
+    c.stock.get_exhaustion_rates_of_foreign_investment_by_ticker = _by_ticker
+
+    rows = c.fetch_daily_metrics("005930", "2024-01-01", "2024-06-30")
+    assert len(rows) == 1
+    assert rows[0].foreign_own_pct == 53.12
+    assert rows[0].shares_outstanding == 5969782550
+    assert rows[0].metric_date == "2024-06-30"
+
+
+def test_krx_foreign_ownership_needs_login():
+    c = _krx()
+
+    def _boom(date, market, balance_limit=False):
+        raise RuntimeError("KRX 로그인 실패")
+    c.stock.get_exhaustion_rates_of_foreign_investment_by_ticker = _boom
+
+    try:
+        c.fetch_daily_metrics("005930", "2024-01-01", "2024-06-30")
+        raise AssertionError("expected NotSupportedError")
+    except NotSupportedError:
+        pass
+
+
+def test_krx_index_membership():
+    c = _krx()
+
+    def _members(code, date=None, alternative=False):
+        return ["005930", "000660"] if code == "1028" else ["035420"]
+    c.stock.get_index_portfolio_deposit_file = _members
+
+    rows = c.fetch_index_membership("005930")
+    assert [r.index_name for r in rows] == ["KOSPI200"]  # in KOSPI200 only

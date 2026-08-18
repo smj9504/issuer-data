@@ -6,6 +6,8 @@ returns 403. Endpoints return columnar JSON; CIK is zero-padded to 10 digits.
 
 from __future__ import annotations
 
+import re
+
 from ..config import Settings
 from ..http.client import HttpClient
 from ..logging import get_logger
@@ -14,6 +16,9 @@ from ..utils.dates import default_range, to_iso
 from .base import BaseCollector, NotSupportedError
 
 log = get_logger(__name__)
+
+# 13D/13G significant-ownership form types (with amendments).
+_13DG_FORMS = {"SC 13D", "SC 13D/A", "SC 13G", "SC 13G/A"}
 
 TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
 TICKERS_EXCHANGE_URL = "https://www.sec.gov/files/company_tickers_exchange.json"
@@ -270,6 +275,62 @@ class EdgarCollector(BaseCollector):
             count += 1
         return out
 
+    # --------------------------------------------------------------- ownership
+    def fetch_ownership(self, symbol: str, limit: int = 15):
+        """Parse recent SC 13D/13G cover pages into OwnershipRow (best-effort).
+
+        13D/G are filed as documents (not a structured feed), so the reporting
+        person, beneficially-owned share count, and percent of class are pulled
+        from the cover page heuristically; a filing that yields neither a holder
+        nor a percent is skipped rather than guessed.
+        """
+        cik = self._cik_for(symbol)
+        try:
+            data = self.client.get_json(SUBMISSIONS_URL.format(cik10=cik))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("EDGAR submissions failed for %s: %s", symbol, exc)
+            return []
+        recent = data.get("filings", {}).get("recent", {})
+        accs = recent.get("accessionNumber", [])
+        dates = recent.get("filingDate", [])
+        forms = recent.get("form", [])
+        primary = recent.get("primaryDocument", [])
+        cik_int = int(cik)
+        out: list = []
+        for i, acc in enumerate(accs):
+            if len(out) >= limit:
+                break
+            form = forms[i] if i < len(forms) else ""
+            if form not in _13DG_FORMS:
+                continue
+            filed = to_iso(dates[i]) if i < len(dates) else None
+            acc_nodash = acc.replace("-", "")
+            base = f"https://www.sec.gov/Archives/edgar/data/{cik_int}/{acc_nodash}"
+            doc = primary[i] if i < len(primary) else ""
+            if not doc:
+                continue
+            row = self._parse_13dg(f"{base}/{doc}", symbol, filed, acc, form)
+            if row is not None:
+                out.append(row)
+        return out
+
+    def _parse_13dg(self, url: str, symbol: str, filed: str | None, acc: str, form: str):
+        from ..models import OwnershipRow
+
+        try:
+            content = self.client.get_bytes(url)
+        except Exception:  # noqa: BLE001
+            return None
+        text = _html_to_text(content)
+        pct = _find_pct(text)
+        shares = _find_shares(text)
+        holder = _find_holder(text)
+        if holder is None and pct is None:
+            return None
+        return OwnershipRow(symbol=symbol, market="US", as_of_date=filed or "",
+                            holder_name=holder or "(unknown)", holder_type=form,
+                            shares=shares, pct=pct, source="edgar")
+
     def _form4_xml_url(self, base: str, primary_doc: str) -> str | None:
         if primary_doc.lower().endswith(".xml"):
             # primaryDocument often points at the XSL-rendered HTML
@@ -316,3 +377,49 @@ class EdgarCollector(BaseCollector):
                                      insider=insider, relation=relation, txn_type="hold",
                                      filing_id=acc, source="edgar"))
         return rows
+
+
+# --- 13D/G cover-page heuristics (module-level so they are unit-testable) ------
+def _html_to_text(content: bytes) -> str:
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(content, "lxml")
+    for tag in soup(["script", "style"]):
+        tag.decompose()
+    return soup.get_text(separator="\n", strip=True)
+
+
+def _find_pct(text: str) -> float | None:
+    # "Percent of class represented by amount in row (11)  ... 5.2%"
+    m = re.search(r"percent of class[\s\S]{0,140}?(\d{1,3}(?:\.\d+)?)\s*%", text, re.IGNORECASE)
+    if not m:
+        m = re.search(r"(\d{1,3}(?:\.\d+)?)\s*%\s*(?:of|of the)\s+(?:the\s+)?class", text, re.IGNORECASE)
+    if not m:
+        return None
+    try:
+        val = float(m.group(1))
+        return val if 0 <= val <= 100 else None
+    except ValueError:
+        return None
+
+
+def _find_shares(text: str) -> float | None:
+    m = re.search(r"aggregate amount beneficially owned[\s\S]{0,180}?([1-9]\d{0,2}(?:,\d{3})+|\d{4,})",
+                  text, re.IGNORECASE)
+    if not m:
+        return None
+    try:
+        return float(m.group(1).replace(",", ""))
+    except ValueError:
+        return None
+
+
+def _find_holder(text: str) -> str | None:
+    m = re.search(r"name[s]? of reporting person[s]?[^\n]*\n+\s*([^\n]+)", text, re.IGNORECASE)
+    if not m:
+        return None
+    holder = m.group(1).strip()
+    # skip boilerplate continuation lines (IRS no., checkboxes)
+    if not holder or re.fullmatch(r"[\d\W]+", holder) or len(holder) < 2:
+        return None
+    return holder[:200]

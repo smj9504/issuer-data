@@ -48,12 +48,13 @@ for _m in MARKETS:
 DEFAULTS[("US", "insiders")] = "edgar"
 DEFAULTS[("US", "institutional")] = "fmp"
 DEFAULTS[("US", "index")] = "fmp"
+DEFAULTS[("US", "ownership")] = "edgar"   # SC 13D/13G cover-page parsing (best-effort)
 DEFAULTS[("KR", "insiders")] = "dart"
 DEFAULTS[("KR", "ownership")] = "dart"
-# NOTE: US ownership (13D/G significant-holder) has no clean free structured source
-# (EDGAR 13D/G is unstructured filing text; FMP has no free endpoint), so it is
-# deliberately left with no default — `--type ownership --market us` skips cleanly.
-# KR ownership is served by DART's majorstock (5%+) disclosures above.
+# KR foreign-ownership % + listed shares and KR index membership come from KRX
+# (pykrx), which needs a free KRX_ID/KRX_PW login; they skip cleanly without it.
+DEFAULTS[("KR", "metrics")] = "krx"
+DEFAULTS[("KR", "index")] = "krx"
 
 ALL_SOURCES = ("krx", "dart", "hkexnews", "edgar", "yfinance", "fmp", "alphavantage")
 
