@@ -126,8 +126,10 @@ DART's `document.xml` endpoint returns a ZIP under a Content-Type of
 under the extension they really are. A document that downloads but yields no text is
 logged and counted in the run summary rather than stored as a silent `text_chars=0`.
 
-Scanned/image-only PDFs yield no text layer, so **OCR runs by default**: each such page
-is rendered and passed through Tesseract — multilingual (`eng+kor+chi_tra` by default),
+Pages with no text layer yield nothing to pdfplumber, so **OCR runs by default** — and it
+runs **per page**, not only when the whole document is empty. A filing is often mostly
+born-digital with a few scanned pages or a chart holding its numbers inside an image; those
+pages are rendered and passed through Tesseract — multilingual (`eng+kor+chi_tra` by default),
 so Korean/English/Traditional-Chinese scans all recover text into `text_content`. Turn it
 off per run with `--no-ocr`, or globally with `ISSUER_OCR_ENABLED=false`.
 
@@ -138,8 +140,14 @@ package:
 apt install tesseract-ocr tesseract-ocr-kor tesseract-ocr-chi-tra
 ```
 
-Without it OCR is skipped and logs one warning saying so — scanned PDFs are then recorded
-with no text rather than failing the run.
+Without it OCR is skipped and logs one warning saying so, naming how many pages of the
+document have no text layer — a page that contributed nothing is reported rather than
+quietly missing from `text_content`.
+
+Charts are also where a line-based table detector goes wrong: a bar chart's gridlines look
+like a grid, and the near-empty table it yields would ground at a perfect confidence because
+there are no numbers in it to check. Detected grids that are almost entirely empty are
+dropped.
 
 ### Structured PDF extraction (`--extract-tables`)
 
@@ -234,7 +242,10 @@ python -m issuer_data eval --escalate      # also run configured escalation, rep
 ```
 
 Reports **TEDS**, **GriTS-Con**, numeric **exact-match**, and **paragraph-continuity** per
-category (US/en · KR/ko · HK/zh × single-table · split-table · prose) and overall. The
+category (US/en · KR/ko · HK/zh × single-table · split-table · prose) and overall. Prose
+continuity is scored in all three languages because the rejoining rule differs by script:
+Chinese closes up a line break with no space, Korean keeps one (Hangul sits in the CJK block
+but is space-delimited between 어절), and scoring English alone said nothing about either. The
 synthetic cases are authored from known data so ground truth is exact. Add real labelled
 documents under `data/eval/<name>/{doc.pdf, expected.json}` (see `data/eval/README.md`) and
 they are scored automatically — no code change.

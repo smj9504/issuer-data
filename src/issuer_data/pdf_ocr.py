@@ -71,26 +71,45 @@ def ocr_ready() -> bool:
     return False
 
 
-def ocr_pdf(content: bytes, languages: str = "eng", dpi: int = 300,
-            max_pages: int = 50) -> str | None:
-    """Render each PDF page and OCR it; return the concatenated text (or None)."""
+def ocr_pages(content: bytes, languages: str = "eng", dpi: int = 300,
+              max_pages: int = 50, only: set[int] | None = None) -> dict[int, str]:
+    """OCR selected pages; returns {0-based page index: text}.
+
+    `only` limits the work to the pages that need it. A filing is often mostly
+    born-digital with a few scanned or chart-only pages, and re-OCRing the pages
+    that already carry a text layer would be both slow and worse than the text
+    that is already there.
+    """
     import pytesseract
     from PIL import Image
 
-    parts: list[str] = []
+    out: dict[int, str] = {}
     doc = _open_pdf(content)
     try:
+        done = 0
         for i, page in enumerate(doc):
-            if i >= max_pages:
+            if only is not None and i not in only:
+                continue
+            if done >= max_pages:
                 log.info("OCR page cap (%d) reached; remaining pages skipped", max_pages)
                 break
+            done += 1
             try:
                 pix = page.get_pixmap(dpi=dpi)
                 img = Image.open(io.BytesIO(pix.tobytes("png")))
-                parts.append(pytesseract.image_to_string(img, lang=languages))
+                text = pytesseract.image_to_string(img, lang=languages).strip()
+                if text:
+                    out[i] = text
             except Exception as exc:  # noqa: BLE001
                 log.warning("OCR failed on page %d: %s", i + 1, exc)
     finally:
         doc.close()
-    text = "\n".join(parts).strip()
+    return out
+
+
+def ocr_pdf(content: bytes, languages: str = "eng", dpi: int = 300,
+            max_pages: int = 50) -> str | None:
+    """Render every PDF page and OCR it; return the concatenated text (or None)."""
+    pages = ocr_pages(content, languages, dpi, max_pages)
+    text = "\n".join(pages[i] for i in sorted(pages)).strip()
     return text or None

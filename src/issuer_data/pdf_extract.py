@@ -67,6 +67,25 @@ class StructuredDoc:
 
 
 # ------------------------------------------------------------- table stitching
+_MIN_FILLED_CELLS = 2
+_MIN_FILLED_RATIO = 0.10
+
+
+def _too_empty(rows: list[list[str]]) -> bool:
+    """Whether a detected grid holds too little to be a table.
+
+    A bar chart's gridlines look exactly like a table to a line-based detector,
+    and the near-empty grid it yields would otherwise score a perfect confidence
+    — grounding finds no numbers to check, so it reports nothing wrong. Real
+    tables are mostly full; a grid with one stray axis label is a chart.
+    """
+    cells = [cell for row in rows for cell in row]
+    filled = sum(1 for cell in cells if cell.strip())
+    if not cells:
+        return True
+    return filled < _MIN_FILLED_CELLS or filled / len(cells) < _MIN_FILLED_RATIO
+
+
 def _col_signature_matches(a: list[float], b: list[float], tol: float) -> bool:
     """Two column x-edge lists describe the same table shape."""
     if not a or not b or abs(len(a) - len(b)) > 1:
@@ -106,7 +125,7 @@ def stitch_tables(
             top, bottom = float(bbox[1]), float(bbox[3])
             sig = [float(x) for x in (tbl.get("col_x") or [])]
             rows = [_norm_row(r) for r in (tbl.get("rows") or []) if r]
-            if not rows:
+            if _too_empty(rows):
                 continue
             starts_high = top <= height * top_frac
             is_first_on_page = ti == 0
@@ -138,18 +157,31 @@ def stitch_tables(
 
 
 # --------------------------------------------------------------- reflow / prose
-_CJK = (
-    (0x2E80, 0x9FFF), (0x3000, 0x303F), (0xAC00, 0xD7A3),  # CJK + Hangul syllables
-    (0xF900, 0xFAFF), (0xFF00, 0xFFEF),
+# Scripts written without spaces between words, so a line break inside a
+# paragraph joins with nothing between: Chinese and Japanese.
+_SCRIPTIO_CONTINUA = (
+    (0x2E80, 0x9FFF), (0x3000, 0x303F), (0xF900, 0xFAFF), (0xFF00, 0xFFEF),
+)
+# Korean is NOT one of them. Hangul sits inside the CJK block above but is
+# space-delimited between 어절, so joining Korean lines without a space runs the
+# words together ("300조원을달성하였으며"). Excluded explicitly, jamo included.
+_HANGUL = (
+    (0x1100, 0x11FF), (0x3130, 0x318F), (0xA960, 0xA97F),
+    (0xAC00, 0xD7A3), (0xD7B0, 0xD7FF),
 )
 _SENT_END = tuple(".!?…。！？」』）)")
 _PAGE_NUM_RE = re.compile(r"^[\s\-–—]*(?:page|p\.?|페이지|第)?\s*\d+\s*(?:/\s*\d+)?"
                           r"\s*(?:쪽|페이지|页)?[\s\-–—]*$", re.IGNORECASE)
 
 
-def _is_cjk(ch: str) -> bool:
-    o = ord(ch)
-    return any(lo <= o <= hi for lo, hi in _CJK)
+def _is_hangul(ch: str) -> bool:
+    return any(lo <= ord(ch) <= hi for lo, hi in _HANGUL)
+
+
+def _joins_without_space(ch: str) -> bool:
+    """Whether a line break before/after `ch` should close up with no space."""
+    return (not _is_hangul(ch)
+            and any(lo <= ord(ch) <= hi for lo, hi in _SCRIPTIO_CONTINUA))
 
 
 def _norm_key(text: str) -> str:
@@ -185,8 +217,8 @@ def _join(acc: str, nxt: str) -> str:
         return acc
     if acc.endswith("-") and nxt[:1].islower():
         return acc[:-1] + nxt  # de-hyphenate a latin line-break
-    if _is_cjk(acc[-1]) and _is_cjk(nxt[0]):
-        return acc + nxt  # no space between CJK characters
+    if _joins_without_space(acc[-1]) and _joins_without_space(nxt[0]):
+        return acc + nxt  # Chinese / Japanese need no space at a line break
     return acc + " " + nxt
 
 

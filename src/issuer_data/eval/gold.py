@@ -108,6 +108,26 @@ _EN_PROSE = [
 ]
 
 
+# Korean is space-delimited between 어절 while Chinese is not, so a line break
+# inside a paragraph has to be rejoined differently for each. Without a case per
+# language the prose score reports 1.000 on English alone and says nothing about
+# the two markets this project actually collects.
+_KO_PROSE = [
+    ("당사는 2026년 1분기 연결기준 매출액 300조원을 달성하였으며 이는 전년 동기 대비 "
+     "9퍼센트 증가한 수치로서 주력 사업부문 전반의 견조한 수요와 지속적인 비용 통제에 "
+     "기인한 것입니다."),
+    ("경영진은 거시경제 불확실성이 확대되는 가운데에서도 차기 회계연도 전망을 신중하게 "
+     "낙관하고 있으며 현재의 투자 주기가 성숙함에 따라 자본적 지출은 과거 평균 수준으로 "
+     "정상화될 것으로 예상하고 있습니다."),
+]
+_ZH_PROSE = [
+    ("本集團於二零二六年第一季度錄得收入人民幣三千億元較去年同期增長百分之九主要由於各主要"
+     "經營分部需求強勁以及持續嚴格控制成本使經營溢利率較去年同期有所擴大。"),
+    ("儘管宏觀經濟環境的不確定性有所增加管理層對下一財政年度仍持審慎樂觀態度並預期隨著本輪"
+     "投資週期趨於成熟資本開支將回復至過往平均水平。"),
+]
+
+
 def synthetic_cases() -> list[GoldCase]:
     """Build the synthetic gold matrix; skip cases whose fonts are unavailable."""
     if not _reportlab():
@@ -119,17 +139,23 @@ def synthetic_cases() -> list[GoldCase]:
     big = [_US_TABLE[0]] + _US_TABLE[1:] * 20
     cases.append(GoldCase("us_split", "US/en/split-table",
                           _table_pdf(_US_TABLE, repeat=20), tables=[big]))
-    cases.append(GoldCase("us_prose", "US/en/multi-column-prose",
+    cases.append(GoldCase("us_prose", "US/en/prose",
                           _prose_pdf(_EN_PROSE), paragraphs=_EN_PROSE))
     # Korean / Chinese single tables (CID fonts).
     if _register_cid("HYSMyeongJo-Medium"):
         cases.append(GoldCase("kr_single", "KR/ko/single-table",
                               _table_pdf(_KR_TABLE, font="HYSMyeongJo-Medium"),
                               tables=[_KR_TABLE]))
+        cases.append(GoldCase("kr_prose", "KR/ko/prose",
+                              _prose_pdf(_KO_PROSE, font="HYSMyeongJo-Medium"),
+                              paragraphs=_KO_PROSE))
     if _register_cid("STSong-Light"):
         cases.append(GoldCase("hk_single", "HK/zh/single-table",
                               _table_pdf(_HK_TABLE, font="STSong-Light"),
                               tables=[_HK_TABLE]))
+        cases.append(GoldCase("hk_prose", "HK/zh/prose",
+                              _prose_pdf(_ZH_PROSE, font="STSong-Light"),
+                              paragraphs=_ZH_PROSE))
     return cases
 
 

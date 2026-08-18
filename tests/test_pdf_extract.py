@@ -10,6 +10,7 @@ import pytest
 from issuer_data.models import Company, Filing, Security
 from issuer_data.pdf_extract import (
     StitchedTable,
+    _too_empty,
     ground_numbers,
     reflow_narrative,
     stitch_tables,
@@ -93,13 +94,36 @@ def test_reflow_strips_headers_footers_and_merges_paragraphs():
     assert "growth in the fiscal year ending December 2023." in text
 
 
-def test_reflow_cjk_no_space_join():
+def test_reflow_chinese_joins_without_a_space():
+    """Chinese is written without spaces between words, so a line break closes up."""
+    pages = [{"page_no": 1, "width": 600.0, "height": 800.0, "lines": [
+        _line("本期純利較", 400),
+        _line("去年同期增長。", 420),
+    ]}]
+    assert "本期純利較去年同期增長。" in reflow_narrative(pages)
+
+
+def test_reflow_korean_keeps_the_space():
+    """Hangul sits in the CJK block but Korean is space-delimited between 어절.
+
+    Joining it like Chinese ran the words together — "300조원을달성하였으며" — in
+    every Korean paragraph that wrapped a line.
+    """
     pages = [{"page_no": 1, "width": 600.0, "height": 800.0, "lines": [
         _line("당기순이익은", 400),
         _line("전년대비 증가하였다.", 420),
     ]}]
     text = reflow_narrative(pages)
-    assert "당기순이익은전년대비 증가하였다." in text  # no space inserted between CJK
+    assert "당기순이익은 전년대비 증가하였다." in text
+    assert "당기순이익은전년대비" not in text
+
+
+def test_reflow_mixed_korean_and_latin_keeps_the_space():
+    pages = [{"page_no": 1, "width": 600.0, "height": 800.0, "lines": [
+        _line("매출액은 300조원을", 400),
+        _line("달성하였다.", 420),
+    ]}]
+    assert "300조원을 달성하였다." in reflow_narrative(pages)
 
 
 # ------------------------------------------------------------ numeric grounding
@@ -167,3 +191,23 @@ def test_extract_structured_on_real_split_table():
     assert big.rows[0] == ["Account", "2023", "2022"]
     assert big.rows.count(["Account", "2023", "2022"]) == 1  # repeat header dropped
     assert big.confidence > 0.9           # numbers grounded in the text layer
+
+
+# ------------------------------------------------- charts are not tables
+def test_chart_gridlines_are_not_a_table():
+    """A bar chart's rules look like a grid, and the empty result grounds at 1.0.
+
+    Grounding only checks numbers against the text layer, so it reports nothing
+    wrong about a table that holds no numbers at all — the junk would be stored
+    with a perfect confidence.
+    """
+    assert _too_empty([["", "", ""], ["", "", ""]])
+    assert _too_empty([["", "", "", ""] * 6 + ["38171"]])   # one stray axis label
+    assert not _too_empty([["Revenue", "1,234"], ["Cost", "567"]])
+
+
+def test_sparse_but_real_table_is_kept():
+    """Real forms carry padding cells; only near-empty grids are dropped."""
+    rows = [["1. Class of shares", "Ordinary shares", "", "", "Type of shares", "Not applicable"],
+            ["Stock code", "00700", "", "", "Description", ""]]
+    assert not _too_empty(rows)

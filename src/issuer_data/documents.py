@@ -165,17 +165,17 @@ def extract_text(content: bytes, fmt: str, depth: int = 0) -> str | None:
     return None
 
 
-def _pdf_text(content: bytes) -> str | None:
+def _pdf_page_texts(content: bytes) -> list[str]:
+    """Text layer of each page, "" where the page has none."""
     import pdfplumber
 
-    parts: list[str] = []
     with pdfplumber.open(io.BytesIO(content)) as pdf:
-        for page in pdf.pages:
-            t = page.extract_text() or ""
-            if t:
-                parts.append(t)
-    text = "\n".join(parts).strip()
-    return text or None  # None => likely scanned/image PDF
+        return [(page.extract_text() or "").strip() for page in pdf.pages]
+
+
+def _pdf_text(content: bytes) -> str | None:
+    pages = [t for t in _pdf_page_texts(content) if t]
+    return "\n".join(pages).strip() or None  # None => likely scanned/image PDF
 
 
 def markup_text(content: bytes, fmt: str) -> str | None:
@@ -271,19 +271,12 @@ def _download_one(
             log.warning("structured PDF extract failed %s: %s", url, exc)
     if text is None:
         text = extract_text(content, fmt)
-    if not text and fmt == "pdf" and getattr(settings, "ocr_enabled", True):
-        # No text layer (scanned/image-only PDF) → OCR fallback. ocr_ready() warns
-        # once if the engine is missing instead of once per page of every scan.
-        from .pdf_ocr import ocr_pdf, ocr_ready
-
-        if ocr_ready():
-            try:
-                text = ocr_pdf(content, settings.ocr_languages, settings.ocr_dpi,
-                               settings.ocr_max_pages)
-                if text:
-                    log.info("OCR recovered %d chars for %s", len(text), url)
-            except Exception as exc:  # noqa: BLE001
-                log.warning("OCR failed %s: %s", url, exc)
+    if fmt == "pdf" and getattr(settings, "ocr_enabled", True) and not tables:
+        # Pages with no text layer, whether that is the whole document or the
+        # three chart pages inside an otherwise born-digital filing. Gating OCR
+        # on the *document* being empty was how a chart page's numbers vanished
+        # while the surrounding prose still referred to them.
+        text = _ocr_pages_without_text(content, text, settings, url)
     if text and len(text) > _MAX_TEXT:
         text = text[:_MAX_TEXT]
     if not text:
@@ -303,6 +296,40 @@ def _download_one(
         text_chars=len(text) if text else 0,
         downloaded_at=today_iso(),
     ), tables
+
+
+def _ocr_pages_without_text(content: bytes, text: str | None,
+                            settings: Settings, url: str) -> str | None:
+    """Fill in pages that carry no text layer, keeping the pages that do."""
+    from .pdf_ocr import ocr_pages, ocr_ready
+
+    try:
+        pages = _pdf_page_texts(content)
+    except Exception as exc:  # noqa: BLE001
+        log.debug("could not read per-page text for %s: %s", url, exc)
+        return text
+    missing = {i for i, t in enumerate(pages) if not t}
+    if not missing:
+        return text
+    if not ocr_ready():
+        log.warning("%d of %d page(s) have no text layer and OCR is unavailable: %s",
+                    len(missing), len(pages), url)
+        return text
+    try:
+        recovered = ocr_pages(content, settings.ocr_languages, settings.ocr_dpi,
+                              settings.ocr_max_pages, only=missing)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("OCR failed %s: %s", url, exc)
+        return text
+    for index, page_text in recovered.items():
+        pages[index] = page_text
+    still_empty = len(missing) - len(recovered)
+    if recovered:
+        log.info("OCR recovered %d of %d text-less page(s) for %s",
+                 len(recovered), len(missing), url)
+    if still_empty:
+        log.warning("%d page(s) yielded no text even after OCR: %s", still_empty, url)
+    return "\n".join(t for t in pages if t).strip() or None
 
 
 def download_filing_documents(

@@ -131,3 +131,77 @@ def test_missing_engine_warns_once_with_install_instructions(caplog, monkeypatch
     assert len(warnings) == 1
     assert "apt install tesseract-ocr" in caplog.text
     assert "--no-ocr" in caplog.text
+
+
+def _mixed_pdf(prose_before: str, image_text: list[str], prose_after: str) -> bytes:
+    """Text page, an image-only page carrying `image_text`, then another text page."""
+    fitz = pytest.importorskip("fitz")
+    from PIL import Image, ImageDraw, ImageFont
+
+    try:
+        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 34)
+    except OSError:
+        pytest.skip("no scalable font available to render a legible test image")
+    img = Image.new("RGB", (1000, 160 + 90 * len(image_text)), "white")
+    draw = ImageDraw.Draw(img)
+    for i, line in enumerate(image_text):
+        draw.text((40, 60 + i * 90), line, fill="black", font=font)
+    png = io.BytesIO()
+    img.save(png, format="PNG")
+
+    doc = fitz.open()
+    doc.new_page(width=560, height=400).insert_text((50, 80), prose_before, fontsize=11)
+    doc.new_page(width=560, height=300).insert_image(
+        fitz.Rect(0, 0, 560, 280), stream=png.getvalue())
+    doc.new_page(width=560, height=400).insert_text((50, 80), prose_after, fontsize=11)
+    out = doc.tobytes()
+    doc.close()
+    return out
+
+
+def test_a_chart_page_inside_a_text_pdf_is_not_silently_dropped():
+    """OCR used to need the *whole* document to be empty, so a chart page vanished
+    while the surrounding prose still referred to "the chart above"."""
+    if not ocr_available():
+        pytest.skip("Tesseract/PyMuPDF not installed")
+    from issuer_data import documents
+    from issuer_data.config import Settings
+
+    pdf = _mixed_pdf("The Group reports segment revenues as set out below.",
+                     ["VAS 96110", "Marketing 38171"],
+                     "Further commentary follows the chart above.")
+    plain = documents.extract_text(pdf, "pdf") or ""
+    assert "96110" not in plain          # the text layer really is missing it
+
+    settings = Settings(_env_file=None, ocr_languages="eng")
+    filled = documents._ocr_pages_without_text(pdf, plain, settings, "http://x/mixed.pdf")
+    assert "96110" in filled and "38171" in filled
+    # spliced back in order, between the pages that do have text
+    assert filled.index("segment revenues") < filled.index("96110") < filled.index("commentary")
+
+
+def test_pages_with_text_are_not_re_ocred():
+    if not ocr_available():
+        pytest.skip("Tesseract/PyMuPDF not installed")
+    from issuer_data.pdf_ocr import ocr_pages
+
+    pdf = _mixed_pdf("Page one prose.", ["ONLY IMAGE 4242"], "Page three prose.")
+    recovered = ocr_pages(pdf, languages="eng", dpi=150, only={1})
+    assert set(recovered) == {1}
+    assert "4242" in recovered[1].replace(" ", "")
+
+
+def test_text_less_pages_are_reported_when_ocr_is_unavailable(caplog, monkeypatch):
+    """Silence is the failure mode: say which pages have nothing rather than
+    storing a document that quietly lost some."""
+    import logging
+
+    from issuer_data import documents
+    from issuer_data.config import Settings
+
+    pdf = _mixed_pdf("Before.", ["HIDDEN 777"], "After.")
+    monkeypatch.setattr("issuer_data.pdf_ocr.ocr_ready", lambda: False)
+    with caplog.at_level(logging.WARNING):
+        documents._ocr_pages_without_text(pdf, "Before.\nAfter.",
+                                          Settings(_env_file=None), "http://x/m.pdf")
+    assert "no text layer" in caplog.text
