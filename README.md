@@ -143,10 +143,45 @@ python -m issuer_data collect --market hk --type filings --symbols 00700 \
   inserted spaces). The reflowed text replaces the flat per-page blob in `text_content`.
 - **Numeric grounding** — every number emitted in a table is checked against the raw text
   layer; the grounded fraction is stored as `filing_tables.confidence`, an
-  anti-hallucination guard and the signal a later paid-engine escalation keys on.
+  anti-hallucination guard and the signal escalation keys on. Tables below the confidence
+  threshold are marked `filing_tables.needs_review=1`.
 
 The front-end uses `pdfplumber`; heavier local layout engines (Docling / Table Transformer)
-and optional paid escalation for the low-confidence tail are a later add-on.
+are a later add-on.
+
+#### Optional paid escalation (off + local-only by default)
+
+Only the **low-confidence tail** is re-processed by a paid LLM, never the whole corpus.
+Escalation is **disabled and local-only by default** — `ISSUER_PDF_LOCAL_ONLY=true`
+hard-blocks any off-box call even when enabled, so documents never leave the machine
+unless you opt in on **both** flags and provide a key:
+
+```bash
+ISSUER_PDF_ESCALATION_ENABLED=true ISSUER_PDF_LOCAL_ONLY=false \
+ISSUER_ESCALATION_API_KEY=sk-... \
+python -m issuer_data collect --market us --type filings --symbols AAPL \
+    --download-docs --extract-tables
+```
+
+The `TextReconstructionEscalator` sends only the low-confidence page's **text layer** (no
+image) plus the garbled rows to the LLM and re-grounds the JSON it returns — on failure it
+returns nothing and the local result is kept with `needs_review=1` (never fabricated). A
+`VisionEscalator` interface is stubbed for scanned pages (needs a page-render backend).
+Cost is logged per run using `ISSUER_ESCALATION_COST_PER_PAGE`.
+
+### Measuring extraction accuracy (`eval`)
+
+```bash
+python -m issuer_data eval                 # score the built-in synthetic gold matrix
+python -m issuer_data eval --json          # full report as JSON
+python -m issuer_data eval --escalate      # also run configured escalation, report lift/cost
+```
+
+Reports **TEDS**, **GriTS-Con**, numeric **exact-match**, and **paragraph-continuity** per
+category (US/en · KR/ko · HK/zh × single-table · split-table · prose) and overall. The
+synthetic cases are authored from known data so ground truth is exact. Add real labelled
+documents under `data/eval/<name>/{doc.pdf, expected.json}` (see `data/eval/README.md`) and
+they are scored automatically — no code change.
 
 ## Development
 
