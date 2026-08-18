@@ -414,12 +414,33 @@ def _find_shares(text: str) -> float | None:
         return None
 
 
+# Cover-page label boilerplate that sits between "NAME OF REPORTING PERSON" and
+# the actual name (varies by filer/template), so it must be skipped over.
+_HOLDER_SKIP = re.compile(
+    r"i\.?r\.?s\.?|identification|entities only|check the appropriate|member of a group|"
+    r"sec use only|^\(?[a-z0-9]\)?[.)]?$|^\(\d+\)|social security|of above person",
+    re.IGNORECASE,
+)
+
+
 def _find_holder(text: str) -> str | None:
-    m = re.search(r"name[s]? of reporting person[s]?[^\n]*\n+\s*([^\n]+)", text, re.IGNORECASE)
+    """Reporting-person name: first real name line after the label, skipping the
+    IRS-number / checkbox boilerplate that follows it on a 13D/G cover page."""
+    m = re.search(r"name[s]?\s+of\s+reporting\s+person[s]?", text, re.IGNORECASE)
     if not m:
         return None
-    holder = m.group(1).strip()
-    # skip boilerplate continuation lines (IRS no., checkboxes)
-    if not holder or re.fullmatch(r"[\d\W]+", holder) or len(holder) < 2:
-        return None
-    return holder[:200]
+    tail = text[m.end():]
+    for line in tail.split("\n")[:10]:
+        cand = line.strip(" \t.:-()")
+        if len(cand) < 3 or _HOLDER_SKIP.search(cand):
+            continue
+        if not re.search(r"[A-Za-z]{2,}", cand):   # need real letters (not a number/box)
+            continue
+        # a name line shouldn't be mostly digits
+        # trim a trailing IRS EIN (e.g. "The Vanguard Group - 23-1945930")
+        cand = re.sub(r"\s*[-–]?\s*\d{2}-\d{7}\s*$", "", cand).strip(" \t.:-")
+        letters = sum(c.isalpha() for c in cand)
+        if letters < max(3, len(cand) // 3):
+            continue
+        return cand[:200]
+    return None
