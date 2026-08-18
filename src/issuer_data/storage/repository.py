@@ -217,14 +217,15 @@ class Repository:
     def upsert_filings(self, company_id: int, filings: Iterable[Filing]) -> int:
         n = 0
         for fl in filings:
+            doc_urls = json.dumps(fl.doc_urls or [])
             self._exec(
                 "INSERT INTO filings(company_id, filing_id, filed_date, filing_type, "
-                "title, url, source) VALUES (?,?,?,?,?,?,?) "
+                "title, url, doc_urls, source) VALUES (?,?,?,?,?,?,?,?) "
                 "ON CONFLICT(company_id, filing_id, source) DO UPDATE SET "
                 "filed_date=excluded.filed_date, filing_type=excluded.filing_type, "
-                "title=excluded.title, url=excluded.url",
+                "title=excluded.title, url=excluded.url, doc_urls=excluded.doc_urls",
                 (company_id, fl.filing_id, fl.filed_date, fl.filing_type, fl.title,
-                 fl.url, fl.source),
+                 fl.url, doc_urls, fl.source),
             )
             n += 1
         return n
@@ -243,6 +244,30 @@ class Repository:
              doc.local_path, doc.doc_format, doc.file_size, doc.text_content,
              doc.text_chars, doc.downloaded_at),
         )
+
+    def upsert_filing_tables(self, company_id: int, filing_id: str, source: str,
+                             doc_seq: int, tables) -> int:
+        """Persist stitched tables (one row per cell). Replaces any prior extraction
+        for this (company, filing, source, doc_seq) so re-runs stay idempotent."""
+        self._exec(
+            "DELETE FROM filing_tables WHERE company_id=? AND filing_id=? AND source=? "
+            "AND doc_seq=?", (company_id, filing_id, source, doc_seq),
+        )
+        n = 0
+        for table_seq, tbl in enumerate(tables):
+            for row_idx, row in enumerate(tbl.rows):
+                for col_idx, value in enumerate(row):
+                    self._exec(
+                        "INSERT INTO filing_tables(company_id, filing_id, source, doc_seq, "
+                        "table_seq, row_idx, col_idx, value, page_start, page_end, "
+                        "confidence, needs_review, source_engine) "
+                        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        (company_id, filing_id, source, doc_seq, table_seq, row_idx,
+                         col_idx, value, tbl.page_start, tbl.page_end, tbl.confidence,
+                         1 if getattr(tbl, "needs_review", False) else 0, tbl.source_engine),
+                    )
+                    n += 1
+        return n
 
     def filings_without_documents(self, company_id: int | None = None, limit: int | None = None):
         sql = (

@@ -8,6 +8,7 @@ is still recorded with text_content=NULL (OCR is a possible later add-on).
 from __future__ import annotations
 
 import io
+import json
 import sqlite3
 import warnings
 import zipfile
@@ -130,12 +131,13 @@ def _zip_text(content: bytes) -> str | None:
 def _download_one(
     client: HttpClient, settings: Settings, company_id: int, filing_id: str,
     source: str, doc_seq: int, url: str, market: str, symbol: str,
-) -> FilingDocument | None:
+    extract_tables: bool = False,
+) -> tuple[FilingDocument | None, list]:
     try:
         resp = client.get(url, headers=_headers_for(url, settings))
     except Exception as exc:  # noqa: BLE001
         log.warning("download failed %s: %s", url, exc)
-        return None
+        return None, []
     content = resp.content
     fmt = _format_from(url, resp.headers.get("Content-Type"))
     filename = _filename_from(url, doc_seq, fmt)
@@ -143,7 +145,41 @@ def _download_one(
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest = dest_dir / filename
     dest.write_bytes(content)
-    text = extract_text(content, fmt)
+    tables: list = []
+    text: str | None = None
+    if extract_tables and fmt == "pdf":
+        # Structured pass: cross-page-stitched tables + reflowed narrative, with
+        # optional (config-gated) escalation of the low-confidence tail.
+        try:
+            from .pdf_escalate import build_escalator
+            from .pdf_extract import extract_structured
+
+            escalator = build_escalator(settings)
+            doc = extract_structured(
+                content, escalator=escalator,
+                threshold=settings.pdf_confidence_threshold,
+                cost_per_page=settings.escalation_cost_per_page,
+            )
+            tables = doc.tables
+            text = doc.text or None
+            if doc.escalated_count:
+                log.info("escalated %d low-confidence table(s) for %s (est. cost $%.3f)",
+                         doc.escalated_count, url, doc.est_cost)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("structured PDF extract failed %s: %s", url, exc)
+    if text is None:
+        text = extract_text(content, fmt)
+    if not text and fmt == "pdf" and getattr(settings, "ocr_enabled", False):
+        # No text layer (scanned/image-only PDF) → OCR fallback.
+        try:
+            from .pdf_ocr import ocr_pdf
+
+            text = ocr_pdf(content, settings.ocr_languages, settings.ocr_dpi,
+                           settings.ocr_max_pages)
+            if text:
+                log.info("OCR recovered %d chars for %s", len(text), url)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("OCR failed %s: %s", url, exc)
     if text and len(text) > _MAX_TEXT:
         text = text[:_MAX_TEXT]
     return FilingDocument(
@@ -158,11 +194,12 @@ def _download_one(
         text_content=text,
         text_chars=len(text) if text else 0,
         downloaded_at=today_iso(),
-    )
+    ), tables
 
 
 def download_filing_documents(
-    repo: Repository, settings: Settings, company_id: int, filings: list[Filing]
+    repo: Repository, settings: Settings, company_id: int, filings: list[Filing],
+    extract_tables: bool = False,
 ) -> int:
     """Download originals + extract text for a list of freshly collected filings."""
     client = _client(settings)
@@ -174,10 +211,12 @@ def download_filing_documents(
         for seq, url in enumerate(urls):
             if not url:
                 continue
-            doc = _download_one(client, settings, company_id, fl.filing_id, fl.source,
-                                seq, url, market, symbol)
+            doc, tables = _download_one(client, settings, company_id, fl.filing_id, fl.source,
+                                        seq, url, market, symbol, extract_tables)
             if doc is not None:
                 repo.upsert_filing_document(doc)
+                if tables:
+                    repo.upsert_filing_tables(company_id, fl.filing_id, fl.source, seq, tables)
                 n += 1
         repo.commit()
     log.info("documents: downloaded %d files for company %s (%s:%s)", n, company_id, market, symbol)
@@ -190,6 +229,7 @@ def backfill_documents(
     symbols: list[str] | None,
     markets: list[str] | None,
     limit: int | None,
+    extract_tables: bool = False,
 ) -> int:
     """Download originals for stored filings that have no documents yet."""
     repo = Repository(conn)
@@ -207,26 +247,55 @@ def backfill_documents(
     n = 0
     for row in rows:
         cid = row["company_id"]
+        filing_id, source = row["filing_id"], row["source"]
         sym = repo.symbol_for_company(cid)
         market, symbol = (sym or ("NA", str(cid)))
-        url = row["url"]
-        if not url:
-            continue
-        doc = _download_one(client, settings, cid, row["filing_id"], row["source"],
-                            0, url, market, symbol)
-        if doc is not None:
-            repo.upsert_filing_document(doc)
-            n += 1
-            repo.commit()
+        # Prefer the persisted document list (exhibits included); fall back to the
+        # single primary url. Skip doc_seqs already downloaded so re-runs are incremental.
+        urls = _parse_doc_urls(row["doc_urls"]) or ([row["url"]] if row["url"] else [])
+        done = _downloaded_seqs(conn, cid, filing_id, source)
+        for seq, url in enumerate(urls):
+            if not url or seq in done:
+                continue
+            doc, tables = _download_one(client, settings, cid, filing_id, source,
+                                        seq, url, market, symbol, extract_tables)
+            if doc is not None:
+                repo.upsert_filing_document(doc)
+                if tables:
+                    repo.upsert_filing_tables(cid, filing_id, source, seq, tables)
+                n += 1
+                repo.commit()
     return n
 
 
+def _parse_doc_urls(raw) -> list[str]:
+    if not raw:
+        return []
+    try:
+        val = json.loads(raw)
+        return [u for u in val if u] if isinstance(val, list) else []
+    except (ValueError, TypeError):
+        return []
+
+
+def _downloaded_seqs(conn, company_id, filing_id, source) -> set[int]:
+    rows = conn.execute(
+        "SELECT doc_seq FROM filing_documents WHERE company_id=? AND filing_id=? AND source=?",
+        (company_id, filing_id, source),
+    ).fetchall()
+    return {r["doc_seq"] for r in rows}
+
+
 def _pending_rows(conn, company_ids, markets, limit):
+    # A filing is pending while it has fewer downloaded documents than its
+    # persisted doc_urls list (>= 1 for the primary), so exhibits are picked up on
+    # a later backfill even after doc_seq=0 was fetched.
     sql = (
-        "SELECT f.company_id, f.filing_id, f.source, f.url FROM filings f "
+        "SELECT f.company_id, f.filing_id, f.source, f.url, f.doc_urls FROM filings f "
         "JOIN securities s ON s.company_id=f.company_id "
-        "WHERE NOT EXISTS (SELECT 1 FROM filing_documents d WHERE d.company_id=f.company_id "
-        "AND d.filing_id=f.filing_id AND d.source=f.source)"
+        "WHERE (SELECT COUNT(*) FROM filing_documents d WHERE d.company_id=f.company_id "
+        "  AND d.filing_id=f.filing_id AND d.source=f.source) "
+        "  < MAX(1, COALESCE(json_array_length(f.doc_urls), 1))"
     )
     params: list = []
     if company_ids:

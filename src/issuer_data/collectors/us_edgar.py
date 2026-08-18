@@ -21,6 +21,9 @@ from .base import BaseCollector, NotSupportedError
 
 log = get_logger(__name__)
 
+# 13D/13G significant-ownership form types (with amendments).
+_13DG_FORMS = {"SC 13D", "SC 13D/A", "SC 13G", "SC 13G/A"}
+
 TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
 TICKERS_EXCHANGE_URL = "https://www.sec.gov/files/company_tickers_exchange.json"
 SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik10}.json"
@@ -106,6 +109,24 @@ def _normalize_issuer(name: str) -> str:
 
 def cik10(cik: str | int) -> str:
     return str(int(cik)).zfill(10)
+
+
+_CF_HINTS = ("cashflow", "netcashprovided", "netcashused", "proceedsfrom", "paymentsto",
+             "paymentsfor", "paymentsofdividends", "cashandcashequivalentsperiod")
+
+
+def _stmt_type(concept: str, has_start: bool) -> str:
+    """Classify a companyfacts concept into IS/BS/CF.
+
+    Instant facts (no period `start`) are balance-sheet stocks; duration facts are
+    income-statement flows unless the concept name signals cash flow.
+    """
+    if not has_start:
+        return "BS"
+    c = concept.lower()
+    if any(h in c for h in _CF_HINTS):
+        return "CF"
+    return "IS"
 
 
 def _xml_text(node, tag: str) -> str | None:
@@ -224,6 +245,10 @@ class EdgarCollector(BaseCollector):
         min_year = None
         if years is not None:
             min_year = _dt.date.today().year - years
+        # Dedupe to one point per (fy, fp, statement_type, account, unit) so that
+        # restated comparatives / YTD-vs-quarter / amendments don't collapse onto the
+        # financials PK last-write-wins. Winner = has an SEC `frame` (canonical) > latest filed.
+        best: dict[tuple, tuple] = {}
         for taxonomy in ("us-gaap", "ifrs-full"):
             concepts = taxonomies.get(taxonomy, {})
             for concept, node in concepts.items():
@@ -235,26 +260,24 @@ class EdgarCollector(BaseCollector):
                             continue
                         fy = p.get("fy")
                         fp = p.get("fp") or "FY"
-                        if fy is None:
+                        if fy is None or (min_year is not None and fy < min_year):
                             continue
-                        if min_year is not None and fy < min_year:
-                            continue
-                        out.append(
-                            FinancialFact(
-                                symbol=symbol,
-                                market="US",
-                                fiscal_year=int(fy),
-                                fiscal_period="FY" if fp == "FY" else fp,
-                                statement_type=None,
-                                account=concept,
-                                account_local=label,
-                                value=p.get("val"),
-                                currency=currency,
-                                unit=unit,
-                                period_end=p.get("end"),
-                                source="edgar",
-                            )
-                        )
+                        stmt = _stmt_type(concept, has_start="start" in p)
+                        key = (int(fy), "FY" if fp == "FY" else fp, stmt, concept, unit)
+                        rank = (1 if p.get("frame") else 0, p.get("filed") or "", p.get("end") or "")
+                        prev = best.get(key)
+                        if prev is None or rank > prev[0]:
+                            best[key] = (rank, concept, label, unit, currency, p)
+        out: list[FinancialFact] = []
+        for (fy, fp, stmt, concept, _unit), (_rank, _c, label, unit, currency, p) in best.items():
+            out.append(
+                FinancialFact(
+                    symbol=symbol, market="US", fiscal_year=fy, fiscal_period=fp,
+                    statement_type=stmt, account=concept, account_local=label,
+                    value=p.get("val"), currency=currency, unit=unit,
+                    period_end=p.get("end"), source="edgar",
+                )
+            )
         return out
 
     # --------------------------------------------------------------- filings
@@ -337,6 +360,62 @@ class EdgarCollector(BaseCollector):
             count += 1
         return out
 
+    # --------------------------------------------------------------- ownership
+    def fetch_ownership(self, symbol: str, limit: int = 15):
+        """Parse recent SC 13D/13G cover pages into OwnershipRow (best-effort).
+
+        13D/G are filed as documents (not a structured feed), so the reporting
+        person, beneficially-owned share count, and percent of class are pulled
+        from the cover page heuristically; a filing that yields neither a holder
+        nor a percent is skipped rather than guessed.
+        """
+        cik = self._cik_for(symbol)
+        try:
+            data = self.client.get_json(SUBMISSIONS_URL.format(cik10=cik))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("EDGAR submissions failed for %s: %s", symbol, exc)
+            return []
+        recent = data.get("filings", {}).get("recent", {})
+        accs = recent.get("accessionNumber", [])
+        dates = recent.get("filingDate", [])
+        forms = recent.get("form", [])
+        primary = recent.get("primaryDocument", [])
+        cik_int = int(cik)
+        out: list = []
+        for i, acc in enumerate(accs):
+            if len(out) >= limit:
+                break
+            form = forms[i] if i < len(forms) else ""
+            if form not in _13DG_FORMS:
+                continue
+            filed = to_iso(dates[i]) if i < len(dates) else None
+            acc_nodash = acc.replace("-", "")
+            base = f"https://www.sec.gov/Archives/edgar/data/{cik_int}/{acc_nodash}"
+            doc = primary[i] if i < len(primary) else ""
+            if not doc:
+                continue
+            row = self._parse_13dg(f"{base}/{doc}", symbol, filed, acc, form)
+            if row is not None:
+                out.append(row)
+        return out
+
+    def _parse_13dg(self, url: str, symbol: str, filed: str | None, acc: str, form: str):
+        from ..models import OwnershipRow
+
+        try:
+            content = self.client.get_bytes(url)
+        except Exception:  # noqa: BLE001
+            return None
+        text = _html_to_text(content)
+        pct = _find_pct(text)
+        shares = _find_shares(text)
+        holder = _find_holder(text)
+        if holder is None and pct is None:
+            return None
+        return OwnershipRow(symbol=symbol, market="US", as_of_date=filed or "",
+                            holder_name=holder or "(unknown)", holder_type=form,
+                            shares=shares, pct=pct, source="edgar")
+
     def _form4_xml_url(self, base: str, primary_doc: str) -> str | None:
         if primary_doc.lower().endswith(".xml"):
             # primaryDocument often points at the XSL-rendered HTML
@@ -369,19 +448,19 @@ class EdgarCollector(BaseCollector):
         title = _xml_text(soup, "officerTitle")
         relation = title or ("director" if is_dir else "officer" if is_off else None)
         rows: list = []
-        for txn in soup.find_all("nonDerivativeTransaction"):
+        for seq, txn in enumerate(soup.find_all("nonDerivativeTransaction")):
             shares = _xml_val(txn, "transactionShares")
             price = _xml_val(txn, "transactionPricePerShare")
             ad = _xml_text(txn, "transactionAcquiredDisposedCode")
             rows.append(InsiderTrade(
                 symbol=symbol, market="US", filed_date=filed or "",
                 insider=insider, relation=relation,
-                txn_type="buy" if ad == "A" else "sell" if ad == "D" else ad,
-                shares=shares, price=price, filing_id=acc, source="edgar"))
+                txn_type="buy" if ad == "A" else "sell" if ad == "D" else (ad or "hold"),
+                txn_seq=seq, shares=shares, price=price, filing_id=acc, source="edgar"))
         if not rows:  # holding-only Form 4 (no transaction) — still record the filing
             rows.append(InsiderTrade(symbol=symbol, market="US", filed_date=filed or "",
-                                     insider=insider, relation=relation, filing_id=acc,
-                                     source="edgar"))
+                                     insider=insider, relation=relation, txn_type="hold",
+                                     filing_id=acc, source="edgar"))
         return rows
 
     # -------------------------------------------------------- institutional
@@ -829,6 +908,72 @@ class EdgarCollector(BaseCollector):
         if not links:
             raise NotSupportedError("Could not find a Form 13F dataset link on sec.gov")
         return "https://www.sec.gov" + links[0]
+
+
+def _html_to_text(content: bytes) -> str:
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(content, "lxml")
+    for tag in soup(["script", "style"]):
+        tag.decompose()
+    return soup.get_text(separator="\n", strip=True)
+
+
+def _find_pct(text: str) -> float | None:
+    # "Percent of class represented by amount in row (11)  ... 5.2%"
+    m = re.search(r"percent of class[\s\S]{0,140}?(\d{1,3}(?:\.\d+)?)\s*%", text, re.IGNORECASE)
+    if not m:
+        m = re.search(r"(\d{1,3}(?:\.\d+)?)\s*%\s*(?:of|of the)\s+(?:the\s+)?class", text, re.IGNORECASE)
+    if not m:
+        return None
+    try:
+        val = float(m.group(1))
+        return val if 0 <= val <= 100 else None
+    except ValueError:
+        return None
+
+
+def _find_shares(text: str) -> float | None:
+    m = re.search(r"aggregate amount beneficially owned[\s\S]{0,180}?([1-9]\d{0,2}(?:,\d{3})+|\d{4,})",
+                  text, re.IGNORECASE)
+    if not m:
+        return None
+    try:
+        return float(m.group(1).replace(",", ""))
+    except ValueError:
+        return None
+
+
+# Cover-page label boilerplate that sits between "NAME OF REPORTING PERSON" and
+# the actual name (varies by filer/template), so it must be skipped over.
+_HOLDER_SKIP = re.compile(
+    r"i\.?r\.?s\.?|identification|entities only|check the appropriate|member of a group|"
+    r"sec use only|^\(?[a-z0-9]\)?[.)]?$|^\(\d+\)|social security|of above person",
+    re.IGNORECASE,
+)
+
+
+def _find_holder(text: str) -> str | None:
+    """Reporting-person name: first real name line after the label, skipping the
+    IRS-number / checkbox boilerplate that follows it on a 13D/G cover page."""
+    m = re.search(r"name[s]?\s+of\s+reporting\s+person[s]?", text, re.IGNORECASE)
+    if not m:
+        return None
+    tail = text[m.end():]
+    for line in tail.split("\n")[:10]:
+        cand = line.strip(" \t.:-()")
+        if len(cand) < 3 or _HOLDER_SKIP.search(cand):
+            continue
+        if not re.search(r"[A-Za-z]{2,}", cand):   # need real letters (not a number/box)
+            continue
+        # a name line shouldn't be mostly digits
+        # trim a trailing IRS EIN (e.g. "The Vanguard Group - 23-1945930")
+        cand = re.sub(r"\s*[-–]?\s*\d{2}-\d{7}\s*$", "", cand).strip(" \t.:-")
+        letters = sum(c.isalpha() for c in cand)
+        if letters < max(3, len(cand) // 3):
+            continue
+        return cand[:200]
+    return None
 
 
 def _decode(fh):

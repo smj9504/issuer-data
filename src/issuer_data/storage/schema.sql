@@ -84,7 +84,8 @@ CREATE TABLE IF NOT EXISTS filings (
     filed_date  TEXT,
     filing_type TEXT,
     title       TEXT,
-    url         TEXT,
+    url         TEXT,                     -- primary/viewer URL
+    doc_urls    TEXT,                     -- JSON array of document URLs (primary first)
     source      TEXT NOT NULL,
     PRIMARY KEY (company_id, filing_id, source)
 );
@@ -105,6 +106,28 @@ CREATE TABLE IF NOT EXISTS filing_documents (   -- downloaded originals + extrac
     FOREIGN KEY (company_id, filing_id, source)
         REFERENCES filings(company_id, filing_id, source) ON DELETE CASCADE
 );
+
+-- Structured tables extracted from filing PDFs (cross-page-stitched). Long/tidy:
+-- one row per cell. confidence = fraction of the table's numbers grounded in the
+-- raw text layer; source_engine names the extractor for provenance.
+CREATE TABLE IF NOT EXISTS filing_tables (
+    company_id    INTEGER NOT NULL REFERENCES companies(company_id) ON DELETE CASCADE,
+    filing_id     TEXT NOT NULL,
+    source        TEXT NOT NULL,
+    doc_seq       INTEGER NOT NULL DEFAULT 0,
+    table_seq     INTEGER NOT NULL,        -- 0..N tables within the document
+    row_idx       INTEGER NOT NULL,
+    col_idx       INTEGER NOT NULL,
+    value         TEXT,
+    page_start    INTEGER,
+    page_end      INTEGER,                 -- > page_start when the table was stitched
+    confidence    REAL,
+    needs_review  INTEGER DEFAULT 0,       -- 1 = below the confidence threshold, not resolved
+    source_engine TEXT,
+    PRIMARY KEY (company_id, filing_id, source, doc_seq, table_seq, row_idx, col_idx)
+);
+CREATE INDEX IF NOT EXISTS idx_filing_tables_doc
+    ON filing_tables(company_id, filing_id, source, doc_seq);
 
 -- Daily FX for local <-> USD normalization ------------------------------------
 -- rate_type 'spot' = daily close; 'avg' = mean of daily spot over a fiscal period
@@ -268,11 +291,12 @@ CREATE TABLE IF NOT EXISTS insider_trades (
     filed_date  TEXT NOT NULL,
     insider     TEXT NOT NULL,
     relation    TEXT,                    -- officer/director/10% owner
-    txn_type    TEXT,                    -- buy/sell (A/D)
+    txn_type    TEXT NOT NULL DEFAULT 'hold',  -- 'buy'/'sell'/'hold' (non-NULL for a stable PK)
+    txn_seq     INTEGER NOT NULL DEFAULT 0,    -- distinguishes multiple txns in one filing
     shares      REAL, price REAL,
-    filing_id   TEXT,
+    filing_id   TEXT NOT NULL DEFAULT '',
     source      TEXT NOT NULL,
-    PRIMARY KEY (company_id, filed_date, insider, txn_type, filing_id, source)
+    PRIMARY KEY (company_id, filed_date, insider, txn_type, txn_seq, filing_id, source)
 );
 
 -- Earnings events (calendar; transcripts stored via filing_documents) ---------

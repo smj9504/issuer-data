@@ -243,10 +243,13 @@ def _find_security(conn, symbol, market):
 
 
 def _latest_metric(conn, company_id, accounts):
+    # Honor the documented default: consolidated (CFS) annual (FY) figure only, so
+    # compare never surfaces a quarterly or separate-scope number.
     placeholders = ",".join("?" * len(accounts))
     row = conn.execute(
         f"SELECT value FROM financials WHERE company_id=? AND account IN ({placeholders}) "
-        "AND value IS NOT NULL ORDER BY fiscal_year DESC, fiscal_period DESC LIMIT 1",
+        "AND value IS NOT NULL AND fiscal_period='FY' AND fs_scope='CFS' "
+        "ORDER BY fiscal_year DESC LIMIT 1",
         (company_id, *accounts),
     ).fetchone()
     return row["value"] if row else None

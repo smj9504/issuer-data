@@ -18,7 +18,10 @@ dependencies = [
     "tenacity>=8.3",
     "pykrx>=1.2.8",
     "yfinance>=0.2.40",
-    "OpenDartReader>=0.2.3",
+    # 0.2.3 pins requires-python>=3.13; keep >=0.2.2 so 3.10-3.12 installs 0.2.2
+    # (same API for the corp_codes/finstate_all/list/major_shareholders* calls we use)
+    # while 3.13+ still gets 0.2.3. pip resolves the right one per interpreter.
+    "OpenDartReader>=0.2.2",
     "pdfplumber>=0.11",
     "beautifulsoup4>=4.12",
     "lxml>=5.2",
@@ -28,6 +31,14 @@ dependencies = [
 dev = [
     "pytest>=8.2",
     "ruff>=0.5",
+    "reportlab>=4.0",   # builds synthetic PDFs for the structured-extraction test
+]
+# OCR for scanned/image-only PDFs. Also needs the Tesseract binary on the system
+# (e.g. `apt install tesseract-ocr tesseract-ocr-kor tesseract-ocr-chi-tra`).
+ocr = [
+    "pymupdf>=1.24",    # render PDF pages to images
+    "pytesseract>=0.3.10",
+    "Pillow>=10.0",
 ]
 
 [project.scripts]

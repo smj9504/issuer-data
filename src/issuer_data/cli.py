@@ -48,6 +48,8 @@ def cmd_collect(args) -> int:
     from .orchestrator import Orchestrator
 
     settings = get_settings()
+    if getattr(args, "ocr", False):
+        settings.ocr_enabled = True
     conn = connect(settings.db_path)
     orch = Orchestrator(conn, settings)
     symbols = _split_csv(args.symbols)
@@ -72,6 +74,7 @@ def cmd_collect(args) -> int:
                     limit=args.limit,
                     download_docs=args.download_docs,
                     filing_types=_split_csv(args.filing_type),
+                    extract_tables=args.extract_tables,
                 )
     finally:
         conn.close()
@@ -99,11 +102,13 @@ def cmd_download_docs(args) -> int:
     from .documents import backfill_documents
 
     settings = get_settings()
+    if getattr(args, "ocr", False):
+        settings.ocr_enabled = True
     conn = connect(settings.db_path)
     try:
         n = backfill_documents(conn, settings, _split_csv(args.symbols),
                                _markets(args.market) if args.market != "all" else None,
-                               args.limit)
+                               args.limit, extract_tables=args.extract_tables)
     finally:
         conn.close()
     print(f"Downloaded/updated {n} documents")
@@ -357,6 +362,44 @@ def cmd_query(args) -> int:
     return 0
 
 
+def cmd_eval(args) -> int:
+    import json as _json
+
+    from .eval.harness import default_cases, run_eval
+
+    settings = get_settings()
+    cases = default_cases(args.gold_dir)
+    if not cases:
+        print("No gold cases (install reportlab for synthetic cases, or add "
+              f"labelled cases under {args.gold_dir}/).")
+        return 0
+    escalator = None
+    if args.escalate:
+        from .pdf_escalate import build_escalator
+
+        escalator = build_escalator(settings)
+    report = run_eval(cases, escalator=escalator,
+                      threshold=settings.pdf_confidence_threshold,
+                      cost_per_page=settings.escalation_cost_per_page)
+    if args.json:
+        print(_json.dumps(report, ensure_ascii=False, indent=2))
+        return 0
+    print(f"{'category':28} {'TEDS':>6} {'GriTS':>6} {'num-EM':>7} {'contin':>7}")
+    for cat, m in sorted(report["categories"].items()):
+        print(f"{cat:28} {_fmt(m['teds'])} {_fmt(m['grits'])} "
+              f"{_fmt(m['numeric_em']):>7} {_fmt(m['continuity']):>7}")
+    o = report["overall"]
+    print(f"{'OVERALL':28} {_fmt(o['teds'])} {_fmt(o['grits'])} "
+          f"{_fmt(o['numeric_em']):>7} {_fmt(o['continuity']):>7}")
+    print(f"\ncases: {report['n_cases']}  escalated: {report['escalated_total']}  "
+          f"est. cost: ${report['est_cost_total']:.3f}")
+    return 0
+
+
+def _fmt(v) -> str:
+    return f"{v:6.3f}" if isinstance(v, (int, float)) else f"{'—':>6}"
+
+
 # ------------------------------------------------------------------------- parser
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="issuer-data", description=__doc__)
@@ -381,12 +424,22 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--filing-type",
                    help="with --type filings: comma-separated filter, e.g. 8-K,10-K "
                         "(case-insensitive substring match against filing_type)")
+    c.add_argument("--extract-tables", action="store_true",
+                   help="with --download-docs: run the structured PDF engine "
+                        "(cross-page-stitched tables + reflowed narrative)")
+    c.add_argument("--ocr", action="store_true",
+                   help="OCR scanned/image-only PDFs that have no text layer "
+                        "(needs Tesseract + PyMuPDF)")
     c.set_defaults(func=cmd_collect)
 
     d = sub.add_parser("download-docs", help="backfill original documents for stored filings")
     d.add_argument("--market", choices=MARKET_CHOICES, default="all")
     d.add_argument("--symbols", help="comma-separated symbols")
     d.add_argument("--limit", type=int, help="cap number of filings")
+    d.add_argument("--extract-tables", action="store_true",
+                   help="run the structured PDF engine (stitched tables + reflow)")
+    d.add_argument("--ocr", action="store_true",
+                   help="OCR scanned/image-only PDFs (needs Tesseract + PyMuPDF)")
     d.set_defaults(func=cmd_download_docs)
 
     lk = sub.add_parser("link", help="link cross-listed symbols onto one company")
@@ -423,6 +476,14 @@ def build_parser() -> argparse.ArgumentParser:
     lw.add_argument("--save", action="store_true", help="persist results to the database")
     lw.add_argument("--symbol", help="MARKET:SYMBOL to link results to an issuer (with --save)")
     lw.set_defaults(func=cmd_law)
+
+    ev = sub.add_parser("eval", help="score PDF extraction accuracy on the gold set")
+    ev.add_argument("--gold-dir", default="data/eval",
+                    help="dir of real labelled cases <name>/{doc.pdf,expected.json}")
+    ev.add_argument("--json", action="store_true", help="emit the full report as JSON")
+    ev.add_argument("--escalate", action="store_true",
+                    help="also run configured escalation and report lift/cost")
+    ev.set_defaults(func=cmd_eval)
 
     return p
 

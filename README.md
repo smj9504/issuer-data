@@ -103,7 +103,8 @@ Two-tier entity model for cross-listing:
   attach here; many securities → one company.
 - **`identifier_xref`** — crosswalk so any source resolves to the right `company_id`.
 - **`prices`**, **`financials`** (long/tidy), **`filings`**, **`filing_documents`**
-  (original file + extracted text), **`fx_rates`**, **`company_peers`**, `collection_runs`.
+  (original file + extracted text), **`filing_tables`** (structured PDF tables, one row per
+  cell), **`fx_rates`**, **`company_peers`**, `collection_runs`.
 - Views: **`v_latest_price`** (latest close, local + USD via nearest-prior FX),
   **`v_company_overview`** (one row per company with all its listings).
 
@@ -120,8 +121,73 @@ text into `filing_documents.text_content`:
 - HTML/XML (SEC EDGAR / DART) → `BeautifulSoup` + `lxml`
 - DART XBRL ZIP → unzip then parse inner XML
 
-Scanned/image-only PDFs yield no text (`text_content` is NULL, `text_chars`=0); OCR is a
-possible future add-on.
+Scanned/image-only PDFs yield no text layer. Pass `--ocr` (with `--download-docs` or
+`download-docs`) to render each page and OCR it with Tesseract — multilingual
+(`eng+kor+chi_tra` by default), so Korean/English/Traditional-Chinese scans all recover
+text into `text_content`. OCR needs the Tesseract binary + `pip install '.[ocr]'`
+(PyMuPDF/pytesseract/Pillow); it is off unless `--ocr` or `ISSUER_OCR_ENABLED=true` is set.
+
+### Structured PDF extraction (`--extract-tables`)
+
+Add `--extract-tables` to `--download-docs` (or to `download-docs`) to run a
+template-, country-, and language-agnostic structured pass on PDFs. The logic is
+geometry-based, so it works on Korean/US/HK annual reports and government filings alike:
+
+```bash
+python -m issuer_data collect --market hk --type filings --symbols 00700 \
+    --download-docs --extract-tables
+```
+
+- **Cross-page table stitching** — a table broken by a page break is rejoined when the
+  previous page's table ends at the bottom margin, the next page's starts at the top
+  margin, and their column x-signatures match; a repeated header row on the continuation
+  is dropped. Cells land in **`filing_tables`** (one row per cell, with `page_start`/
+  `page_end` and a `source_engine`).
+- **Narrative reflow** — running headers/footers and page numbers (found by recurrence
+  across pages, not a pattern list) are removed, line-end hyphenation is joined, and
+  paragraphs split across lines/pages are merged into continuous text (CJK joined without
+  inserted spaces). The reflowed text replaces the flat per-page blob in `text_content`.
+- **Numeric grounding** — every number emitted in a table is checked against the raw text
+  layer; the grounded fraction is stored as `filing_tables.confidence`, an
+  anti-hallucination guard and the signal escalation keys on. Tables below the confidence
+  threshold are marked `filing_tables.needs_review=1`.
+
+The front-end uses `pdfplumber`; heavier local layout engines (Docling / Table Transformer)
+are a later add-on.
+
+#### Optional paid escalation (off + local-only by default)
+
+Only the **low-confidence tail** is re-processed by a paid LLM, never the whole corpus.
+Escalation is **disabled and local-only by default** — `ISSUER_PDF_LOCAL_ONLY=true`
+hard-blocks any off-box call even when enabled, so documents never leave the machine
+unless you opt in on **both** flags and provide a key:
+
+```bash
+ISSUER_PDF_ESCALATION_ENABLED=true ISSUER_PDF_LOCAL_ONLY=false \
+ISSUER_ESCALATION_API_KEY=sk-... \
+python -m issuer_data collect --market us --type filings --symbols AAPL \
+    --download-docs --extract-tables
+```
+
+The `TextReconstructionEscalator` sends only the low-confidence page's **text layer** (no
+image) plus the garbled rows to the LLM and re-grounds the JSON it returns — on failure it
+returns nothing and the local result is kept with `needs_review=1` (never fabricated). A
+`VisionEscalator` interface is stubbed for scanned pages (needs a page-render backend).
+Cost is logged per run using `ISSUER_ESCALATION_COST_PER_PAGE`.
+
+### Measuring extraction accuracy (`eval`)
+
+```bash
+python -m issuer_data eval                 # score the built-in synthetic gold matrix
+python -m issuer_data eval --json          # full report as JSON
+python -m issuer_data eval --escalate      # also run configured escalation, report lift/cost
+```
+
+Reports **TEDS**, **GriTS-Con**, numeric **exact-match**, and **paragraph-continuity** per
+category (US/en · KR/ko · HK/zh × single-table · split-table · prose) and overall. The
+synthetic cases are authored from known data so ground truth is exact. Add real labelled
+documents under `data/eval/<name>/{doc.pdf, expected.json}` (see `data/eval/README.md`) and
+they are scored automatically — no code change.
 
 ## Development
 
@@ -213,21 +279,28 @@ python -m issuer_data collect --market us --type ratios   --symbols AAPL   # nee
 
 | category | free source(s) | notes |
 |----------|----------------|-------|
+| category | free source(s) implemented | notes |
+|----------|----------------------------|-------|
 | identifiers / LEI | SEC, DART, GLEIF | LEI via GLEIF (no key) |
-| market cap / shares | FMP, yfinance | foreign-ownership % = KRX login only |
+| market cap / shares | FMP; **KRX** (KR listed-shares + **foreign-ownership %**) | KRX needs free KRX_ID/KRX_PW |
 | ratios / valuation | FMP (+ computed) | US strongest |
-| ownership (major/5%) | DART, FMP | US 13D/G structured = partial |
-| institutional (13F) | FMP, EDGAR | |
-| corporate actions | yfinance, FMP, DART | free via Yahoo |
+| ownership (major/5% + 13D/G) | **DART** (majorstock 5%+), **SEC 13D/13G** (free) | 13D/G = best-effort cover-page parse |
+| institutional (13F) | FMP | via FMP institutional-holder |
+| corporate actions | yfinance, FMP | free via Yahoo |
 | analyst / targets | FMP | US-centric |
-| insider trades | **SEC Form 4 (free)**, DART | fully parsed (name/role/shares/price) |
-| earnings / transcripts | FMP, AV | transcripts → documents |
-| news / sentiment | FMP, AV | |
-| index membership | FMP (US indices) | KR/HK not free |
+| insider trades | **SEC Form 4 (free)**, **DART** (임원·주요주주) | US: name/role/shares/price; KR: exec/major-holder reports |
+| earnings | **FMP** (earnings calendar) | US-centric |
+| news / sentiment | FMP | |
+| index membership | **FMP** (S&P 500 / Nasdaq 100 / Dow), **KRX** (KOSPI200/KRX100/KOSDAQ150) | current snapshot; history not free |
 | ESG | FMP (tier-gated) | sustainability reports → documents |
 
-Honest gaps (land as empty columns, logged — never fabricated): **foreign-ownership %**
-(KRX login), **KR/HK index-membership history**, granular ESG grades.
+The first column lists only sources that are **actually wired** to a collector method; a
+`--type` with no implemented source for a market records a `skipped` run (never `ok` with
+0 rows) and writes nothing. Remaining honest gaps (empty, logged — never fabricated):
+**index-membership history** (only the current snapshot is collected), earnings-call
+transcripts, and granular ESG grades. KR foreign-ownership % and KR index membership need
+a **free** KRX member login (`KRX_ID` / `KRX_PW`); US 13D/G is parsed heuristically from
+filing cover pages, so treat its shares/percent as best-effort.
 
 ## Notes & limitations
 

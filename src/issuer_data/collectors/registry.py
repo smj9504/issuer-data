@@ -48,10 +48,14 @@ for _m in MARKETS:
 DEFAULTS[("US", "insiders")] = "edgar"
 DEFAULTS[("US", "demand")] = "edgar"  # no order-book disclosure elsewhere; US-only
 DEFAULTS[("US", "institutional")] = "fmp"
-DEFAULTS[("US", "ownership")] = "fmp"
 DEFAULTS[("US", "index")] = "fmp"
+DEFAULTS[("US", "ownership")] = "edgar"   # SC 13D/13G cover-page parsing (best-effort)
 DEFAULTS[("KR", "insiders")] = "dart"
 DEFAULTS[("KR", "ownership")] = "dart"
+# KR foreign-ownership % + listed shares and KR index membership come from KRX
+# (pykrx), which needs a free KRX_ID/KRX_PW login; they skip cleanly without it.
+DEFAULTS[("KR", "metrics")] = "krx"
+DEFAULTS[("KR", "index")] = "krx"
 
 ALL_SOURCES = ("krx", "dart", "hkexnews", "edgar", "yfinance", "fmp", "alphavantage")
 

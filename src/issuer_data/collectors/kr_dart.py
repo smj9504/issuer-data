@@ -138,6 +138,82 @@ class DartCollector(BaseCollector):
         return out
 
 
+    # --------------------------------------------------- Extension B coverage
+    def fetch_ownership(self, symbol: str):
+        """대량보유 상황보고 (5%+ major-shareholder disclosures, majorstock.json)."""
+        from ..models import OwnershipRow
+
+        df = self._report_df("major_shareholders", symbol)
+        out: list = []
+        for row in df:
+            date = to_iso(_dot_date(row.get("rcept_dt")))
+            holder = row.get("repror") or row.get("report_tp")
+            if not holder:
+                continue
+            out.append(OwnershipRow(
+                symbol=symbol, market="KR", as_of_date=date or "",
+                holder_name=str(holder), holder_type=row.get("report_tp"),
+                shares=_parse_amount(row.get("stkqy")),
+                pct=_parse_amount(row.get("stkrt")), source="dart"))
+        return out
+
+    def fetch_insiders(self, symbol: str, start: str, end: str):
+        """임원·주요주주 소유보고 (insider/exec ownership reports, elestock.json)."""
+        from ..models import InsiderTrade
+
+        start, end = default_range(start, end, default_years=2)
+        df = self._report_df("major_shareholders_exec", symbol)
+        out: list = []
+        seq_by_filing: dict[str, int] = {}
+        for row in df:
+            date = to_iso(_dot_date(row.get("rcept_dt")))
+            if date and not (start <= date <= end):
+                continue
+            insider = row.get("repror")
+            if not insider:
+                continue
+            rcept = str(row.get("rcept_no") or "")
+            change = _parse_amount(row.get("sp_stock_lmp_irds_cnt"))
+            held = _parse_amount(row.get("sp_stock_lmp_cnt"))
+            if change is None or change == 0:
+                txn_type, shares = "hold", held
+            else:
+                txn_type = "buy" if change > 0 else "sell"
+                shares = abs(change)
+            seq = seq_by_filing.get(rcept, 0)
+            seq_by_filing[rcept] = seq + 1
+            out.append(InsiderTrade(
+                symbol=symbol, market="KR", filed_date=date or "",
+                insider=str(insider), relation=row.get("isu_exctv_ofcps") or "임원",
+                txn_type=txn_type, txn_seq=seq, shares=shares, price=None,
+                filing_id=rcept, source="dart"))
+        return out
+
+    def _report_df(self, method_name: str, symbol: str) -> list[dict]:
+        """Call an OpenDartReader 지분공시 method and return a list of row dicts."""
+        method = getattr(self.dart, method_name, None)
+        if method is None:
+            raise NotSupportedError(f"OpenDartReader has no {method_name}()")
+        try:
+            df = method(symbol)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("DART %s failed for %s: %s", method_name, symbol, exc)
+            return []
+        if df is None or getattr(df, "empty", True):
+            return []
+        # pandas fills absent cells with NaN; scrub to None (NaN != NaN).
+        return [{k: (None if isinstance(v, float) and v != v else v)
+                 for k, v in rec.items()} for rec in df.to_dict("records")]
+
+
+def _dot_date(v) -> str | None:
+    """Normalize a DART dotted date ('2023.12.31' / '2023-12-31') to ISO-ready form."""
+    if v is None:
+        return None
+    s = str(v).strip()
+    return s.replace(".", "-").replace("/", "-") if s else None
+
+
 def _dart_period_end(v) -> str | None:
     """Parse DART thstrm_dt into an ISO period-end date.
 

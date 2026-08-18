@@ -1,20 +1,23 @@
 """Financial Modeling Prep (FMP) collector: global master, prices, financials, filings, peers.
 
 Standalone REST client (financialmodelingprep.com) using an API key from config —
-NOT the MCP server, so the project stays reusable. Free tier is limited
-(~250 req/day, some endpoints US-only).
+NOT the MCP server, so the project stays reusable.
 
-Uses the "stable" API (financialmodelingprep.com/stable/...). The legacy
-/api/v3 and /api/v4 endpoints this used to target were retired 2025-08-31 and
-now return 403 for everyone; the stable API takes the symbol as a query param
-instead of a path segment and renamed several fields (calendarYear ->
-fiscalYear, no more historical/peersList response wrappers, etc).
+Uses FMP's current "stable" API (financialmodelingprep.com/stable). The old
+`/api/v3` and `/api/v4` endpoints were retired on 2025-08-31 and now return a
+"Legacy Endpoint" error for keys created after that date. The free tier is
+limited: it covers US symbols only for prices/statements, ~250 req/day, and
+several endpoints (news, ESG, institutional ownership, index constituents,
+SEC filing search) are premium-only — those return HTTP 4xx and are skipped
+cleanly rather than aborting the run.
 """
 
 from __future__ import annotations
 
 import re
 from datetime import date, timedelta
+
+import requests
 
 from ..config import Settings
 from ..http.client import HttpClient
@@ -31,6 +34,9 @@ _ACCESSION_RE = re.compile(r"\d{10}-\d{2}-\d{6}")
 _FREE_TIER_LIMIT = 5
 # Free-tier sec-filings-search 402s once `from` goes back further than this.
 _FREE_TIER_LOOKBACK_DAYS = 300
+
+# HTTP statuses FMP uses for "not on your plan" / bad request — skip, don't abort.
+_PLAN_LIMITED = {400, 401, 402, 403}
 
 # statement -> (endpoint, our statement_type, key accounts we keep as-is [all kept])
 _STATEMENTS = [
@@ -74,8 +80,17 @@ class FmpCollector(BaseCollector):
         self.client = HttpClient(rate_limit=settings.fmp_rate_limit)
 
     def _get(self, path: str, **params):
+        """GET a stable endpoint. Returns parsed JSON, or None when the endpoint
+        is unavailable on the current plan (HTTP 4xx) so callers skip it cleanly."""
         params["apikey"] = self.api_key
-        return self.client.get_json(f"{_BASE}/{path}", params=params)
+        try:
+            return self.client.get_json(f"{_BASE}/{path}", params=params)
+        except requests.HTTPError as exc:
+            status = exc.response.status_code if exc.response is not None else None
+            if status in _PLAN_LIMITED:
+                log.warning("FMP %s unavailable on this plan (HTTP %s) — skipping", path, status)
+                return None
+            raise
 
     def _sym(self, symbol: str) -> str:
         return fmp_symbol(self._current_market, symbol)
@@ -101,7 +116,7 @@ class FmpCollector(BaseCollector):
                     isin=p.get("isin"),
                     cik=_pad_cik(p.get("cik")),
                     currency=p.get("currency"),
-                    exchange=p.get("exchange"),
+                    exchange=p.get("exchange") or p.get("exchangeShortName"),
                     website=p.get("website"),
                     security_type="COMMON",
                     is_primary=True,
@@ -116,10 +131,11 @@ class FmpCollector(BaseCollector):
         data = self._get(
             "historical-price-eod/full", symbol=self._sym(symbol), **{"from": start, "to": end}
         )
-        if not isinstance(data, list):
+        hist = _rows(data)
+        if not hist:
             return []
         out: list[Price] = []
-        for row in data:
+        for row in hist:
             out.append(
                 Price(
                     symbol=symbol,
@@ -214,9 +230,12 @@ class FmpCollector(BaseCollector):
     # ----------------------------------------------------------------- peers
     def fetch_peers(self, symbol: str) -> list[str]:
         data = self._get("stock-peers", symbol=self._sym(symbol))
-        if not isinstance(data, list):
-            return []
-        return [r["symbol"] for r in data if r.get("symbol")]
+        if isinstance(data, list):
+            # stable returns [{symbol, companyName, ...}]; legacy was [{peersList: [...]}]
+            if data and "peersList" in data[0]:
+                return list(data[0].get("peersList", []))
+            return [str(r["symbol"]) for r in data if r.get("symbol")]
+        return []
 
     # --------------------------------------------------- Extension B coverage
     def fetch_daily_metrics(self, symbol: str, start: str, end: str):
@@ -253,7 +272,8 @@ class FmpCollector(BaseCollector):
                 if year is None:
                     continue
                 for metric, value in rec.items():
-                    if metric in ("symbol", "date", "calendarYear", "fiscalYear", "period") \
+                    if metric in ("symbol", "date", "calendarYear", "fiscalYear",
+                                  "period", "reportedCurrency") \
                             or not isinstance(value, (int, float)):
                         continue
                     out.append(Ratio(symbol=symbol, market=self._current_market,
@@ -266,13 +286,13 @@ class FmpCollector(BaseCollector):
 
         out: list = []
         div = self._get("dividends", symbol=self._sym(symbol), limit=_FREE_TIER_LIMIT)
-        for r in (div if isinstance(div, list) else []):
+        for r in _rows(div):
             out.append(CorporateAction(symbol=symbol, market=self._current_market,
                                        ex_date=to_iso(r.get("date")), action_type="dividend",
                                        amount=r.get("dividend") or r.get("adjDividend"),
                                        currency=_ccy(self._current_market), source="fmp"))
         spl = self._get("splits", symbol=self._sym(symbol), limit=_FREE_TIER_LIMIT)
-        for r in (spl if isinstance(spl, list) else []):
+        for r in _rows(spl):
             num, den = r.get("numerator"), r.get("denominator")
             out.append(CorporateAction(symbol=symbol, market=self._current_market,
                                        ex_date=to_iso(r.get("date")), action_type="split",
@@ -328,15 +348,55 @@ class FmpCollector(BaseCollector):
     def fetch_institutional(self, symbol: str):
         from ..models import InstitutionalHolding
 
-        # /stable/institutional-ownership/symbol-ownership 404s on the free plan
-        # for every symbol/quarter (paid-plan gate); skip cleanly if restricted.
-        data = self._get("institutional-ownership/symbol-ownership", symbol=self._sym(symbol))
+        # institutional-ownership/symbol-ownership 404s on the free plan for every
+        # symbol/quarter (paid-plan gate); symbol-positions-summary is the endpoint
+        # that actually resolves.
+        data = self._get("institutional-ownership/symbol-positions-summary", symbol=self._sym(symbol))
         out: list = []
         for r in (data if isinstance(data, list) else []):
             out.append(InstitutionalHolding(
                 symbol=symbol, market=self._current_market,
                 quarter=to_iso(r.get("dateReported")) or "", manager=r.get("holder") or "",
                 shares=r.get("shares"), value=r.get("marketValue"), source="fmp"))
+        return out
+
+    def fetch_earnings(self, symbol: str):
+        from ..models import EarningsEvent
+
+        # Historical + upcoming earnings calendar for the ticker.
+        data = self._get("earnings", symbol=self._sym(symbol), limit=80)
+        out: list = []
+        for r in (data if isinstance(data, list) else []):
+            date = to_iso(r.get("date"))
+            if not date:
+                continue
+            out.append(EarningsEvent(
+                symbol=symbol, market=self._current_market, event_date=date,
+                event_type="earnings", fiscal_period=None,
+                eps_estimate=r.get("epsEstimated"),
+                eps_actual=r.get("epsActual") if "epsActual" in r else r.get("eps"),
+                source="fmp"))
+        return out
+
+    def fetch_index_membership(self, symbol: str):
+        from ..models import IndexMembership
+
+        # FMP's constituent lists are US-only (S&P 500 / Nasdaq 100 / Dow Jones).
+        if self._current_market != "US":
+            raise NotSupportedError("FMP index membership is US-only")
+        target = self._sym(symbol).upper()
+        out: list = []
+        for index_name, endpoint in (("S&P500", "sp500-constituent"),
+                                     ("NASDAQ100", "nasdaq-constituent"),
+                                     ("DOWJONES", "dowjones-constituent")):
+            data = self._get(endpoint)
+            for r in (data if isinstance(data, list) else []):
+                if str(r.get("symbol", "")).upper() == target:
+                    out.append(IndexMembership(
+                        symbol=symbol, market=self._current_market,
+                        index_name=index_name, added=to_iso(r.get("dateFirstAdded")),
+                        source="fmp"))
+                    break
         return out
 
     # -------------------------------------------------------------------- fx
@@ -346,9 +406,10 @@ class FmpCollector(BaseCollector):
         for base, quote in pairs:
             pair = f"{base}{quote}"
             data = self._get("historical-price-eod/full", symbol=pair, **{"from": start, "to": end})
-            if not isinstance(data, list):
+            hist = _rows(data)
+            if not hist:
                 continue
-            for row in data:
+            for row in hist:
                 if row.get("close") is None:
                     continue
                 out.append(
@@ -356,6 +417,19 @@ class FmpCollector(BaseCollector):
                            rate=float(row["close"]), source="fmp")
                 )
         return out
+
+
+def _rows(data) -> list:
+    """Normalize an FMP price/actions payload to a list of row dicts.
+
+    The stable API returns a flat list; the retired v3 API wrapped rows in
+    {"historical": [...]}. Accept both, and treat None (plan-limited) as empty.
+    """
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        return data.get("historical") or []
+    return []
 
 
 def _period(p) -> str:

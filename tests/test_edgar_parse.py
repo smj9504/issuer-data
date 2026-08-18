@@ -89,6 +89,41 @@ FORM4_XML = b"""<?xml version="1.0"?>
 </ownershipDocument>"""
 
 
+FACTS_STMT = {
+    "cik": 320193,
+    "facts": {"us-gaap": {
+        "RevenueFromContract": {"label": "Revenue", "units": {"USD": [
+            # duration (has start) → IS; two points same fy/fp, frame one must win
+            {"start": "2022-10-01", "end": "2023-09-30", "val": 383, "fy": 2023, "fp": "FY",
+             "form": "10-K", "filed": "2023-11-03", "frame": "CY2023"},
+            {"start": "2022-10-01", "end": "2023-09-30", "val": 999, "fy": 2023, "fp": "FY",
+             "form": "10-K", "filed": "2023-11-03"},
+        ]}},
+        "Assets": {"label": "Assets", "units": {"USD": [
+            # instant (no start) → BS
+            {"end": "2023-09-30", "val": 352, "fy": 2023, "fp": "FY", "form": "10-K",
+             "filed": "2023-11-03"},
+        ]}},
+        "NetCashProvidedByUsedInOperatingActivities": {"label": "CFO", "units": {"USD": [
+            {"start": "2022-10-01", "end": "2023-09-30", "val": 110, "fy": 2023, "fp": "FY",
+             "form": "10-K", "filed": "2023-11-03"},
+        ]}},
+    }},
+}
+
+
+def test_financials_statement_type_and_dedup(monkeypatch):
+    c = _collector(monkeypatch, FACTS_STMT)
+    facts = c.fetch_financials("AAPL")
+    by = {f.account: f for f in facts}
+    assert by["RevenueFromContract"].statement_type == "IS"      # duration
+    assert by["RevenueFromContract"].value == 383                 # frame point won (not 999)
+    assert by["Assets"].statement_type == "BS"                    # instant
+    assert by["NetCashProvidedByUsedInOperatingActivities"].statement_type == "CF"
+    # dedup: exactly one Revenue row despite two source points
+    assert sum(1 for f in facts if f.account == "RevenueFromContract") == 1
+
+
 def test_parse_form4(monkeypatch):
     c = _collector(monkeypatch, {})
     monkeypatch.setattr(c.client, "get_bytes", lambda url, **kw: FORM4_XML)
@@ -458,3 +493,34 @@ def test_base_collector_demand_signals_not_supported():
 
     with pytest.raises(NotSupportedError):
         DummyCollector().fetch_demand_signals("X")
+
+
+SC13G_HTML = b"""<html><body>
+<p>SCHEDULE 13G</p>
+<table>
+<tr><td>NAME OF REPORTING PERSONS</td></tr>
+<tr><td>I.R.S. IDENTIFICATION NO. OF ABOVE PERSON (ENTITIES ONLY)</td></tr>
+<tr><td>The Vanguard Group</td></tr>
+<tr><td>AGGREGATE AMOUNT BENEFICIALLY OWNED BY EACH REPORTING PERSON</td></tr>
+<tr><td>1,234,567</td></tr>
+<tr><td>PERCENT OF CLASS REPRESENTED BY AMOUNT IN ROW (11)</td></tr>
+<tr><td>8.4%</td></tr>
+</table>
+</body></html>"""
+
+
+def test_parse_13dg_cover_page(monkeypatch):
+    c = _collector(monkeypatch, {})
+    monkeypatch.setattr(c.client, "get_bytes", lambda url, **kw: SC13G_HTML)
+    row = c._parse_13dg("http://x/sc13g.htm", "AAPL", "2024-02-14", "acc-9", "SC 13G")
+    assert row is not None
+    assert row.holder_name == "The Vanguard Group"
+    assert row.pct == 8.4
+    assert row.shares == 1234567.0
+    assert row.holder_type == "SC 13G"
+
+
+def test_parse_13dg_skips_empty(monkeypatch):
+    c = _collector(monkeypatch, {})
+    monkeypatch.setattr(c.client, "get_bytes", lambda url, **kw: b"<html><body>nothing</body></html>")
+    assert c._parse_13dg("http://x/x.htm", "AAPL", "2024-01-01", "a", "SC 13D") is None

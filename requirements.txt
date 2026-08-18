@@ -7,7 +7,7 @@ python-dotenv>=1.0
 tenacity>=8.3
 pykrx>=1.2.8
 yfinance>=0.2.40
-OpenDartReader>=0.2.3
+OpenDartReader>=0.2.2   # 0.2.3 needs Python>=3.13; 0.2.2 covers 3.10-3.12 (same API)
 pdfplumber>=0.11       # PDF text extraction (HKEXnews / attachment PDFs)
 beautifulsoup4>=4.12   # HTML/XML -> text (EDGAR HTML, DART XML)
 lxml>=5.2              # fast parser backend for BeautifulSoup
@@ -15,3 +15,10 @@ lxml>=5.2              # fast parser backend for BeautifulSoup
 # Dev / test
 pytest>=8.2
 ruff>=0.5
+reportlab>=4.0         # synthetic PDFs for the structured-extraction test
+
+# Optional: OCR for scanned PDFs (also needs the system Tesseract binary +
+# language packs: apt install tesseract-ocr tesseract-ocr-kor tesseract-ocr-chi-tra)
+# pymupdf>=1.24
+# pytesseract>=0.3.10
+# Pillow>=10.0

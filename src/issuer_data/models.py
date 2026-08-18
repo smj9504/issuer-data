@@ -282,10 +282,11 @@ class InsiderTrade(_SymBase):
     filed_date: str
     insider: str
     relation: str | None = None
-    txn_type: str | None = None
+    txn_type: str = "hold"          # 'buy'/'sell'/'hold' — non-NULL for a stable PK
+    txn_seq: int = 0               # distinguishes multiple txns within one filing
     shares: float | None = None
     price: float | None = None
-    filing_id: str | None = None
+    filing_id: str = ""
 
 
 class EarningsEvent(_SymBase):
