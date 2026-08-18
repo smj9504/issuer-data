@@ -8,6 +8,8 @@ data/*.sqlite-wal
 data/*.sqlite-shm
 data/documents/
 data/company_overrides.csv
+# OpenDartReader writes its daily corp_code pickle here, relative to CWD
+docs_cache/
 
 # Python
 __pycache__/
