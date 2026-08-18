@@ -23,6 +23,7 @@ dependencies = [
     # 3.10-3.12 this project supports; >=0.2.2 lets pip take 0.2.3 only where it fits.
     "OpenDartReader>=0.2.2",
     "pdfplumber>=0.11",
+    "olefile>=0.46",
     "beautifulsoup4>=4.12",
     "lxml>=5.2",
 ]

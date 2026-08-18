@@ -1,12 +1,23 @@
 """Download original filing documents and extract their body text.
 
-Formats: PDF (pdfplumber), HTML/XML (BeautifulSoup+lxml), DART ZIP-of-XML
-(unzip then parse), plain text. Scanned/image-only PDFs yield no text — the file
-is still recorded with text_content=NULL (OCR is a possible later add-on).
+Formats: PDF (pdfplumber), HTML/XML (BeautifulSoup+lxml), 한글 HWP 5.x and HWPX
+(hwp_extract), archives (recursively, by content), plain text.
+
+The format is decided by sniffing the bytes, never by the URL or the declared
+Content-Type: DART serves a ZIP from a URL ending in `.xml` under a Content-Type
+of `application/x-msdownload`, so every name-based guess gets it wrong and the
+whole body of every Korean filing is silently lost. The same rule applies inside
+archives, whose members are dispatched by content too.
+
+A document that downloads but yields no text is logged and counted, not stored
+silently: an unknown format has to announce itself on the first run rather than
+sit in the database as text_chars=0. Scanned/image-only PDFs are the known-benign
+case of this (OCR is opt-in via ocr_enabled).
 """
 
 from __future__ import annotations
 
+import gzip
 import io
 import json
 import sqlite3
@@ -32,6 +43,7 @@ _BROWSER_UA = (
     "(KHTML, like Gecko) Chrome/131.0 Safari/537.36"
 )
 _MAX_TEXT = 5_000_000  # cap stored text at ~5M chars
+_MAX_ARCHIVE_DEPTH = 3  # archives inside archives; a guard against zip bombs
 
 
 def _client(settings: Settings) -> HttpClient:
@@ -48,7 +60,58 @@ def _headers_for(url: str, settings: Settings) -> dict:
     return {"User-Agent": _BROWSER_UA}
 
 
-def _format_from(url: str, content_type: str | None) -> str:
+# Leading bytes that identify a format regardless of what the URL or the server
+# claims. OLE and ZIP are containers, so they need a second look to tell an HWP
+# from a legacy .doc, or an HWPX from an ordinary archive.
+_MAGIC: tuple[tuple[bytes, str], ...] = (
+    (b"%PDF-", "pdf"),
+    (b"PK\x03\x04", "zip"),
+    (b"PK\x05\x06", "zip"),   # empty archive
+    (b"PK\x07\x08", "zip"),   # spanned archive
+    (b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1", "ole"),
+    (b"\x1f\x8b", "gzip"),
+    (b"%!PS", "ps"),
+)
+
+
+def sniff_format(content: bytes) -> str | None:
+    """Identify `content` by its leading bytes, or None if nothing matches."""
+    from .hwp_extract import is_hwp5, is_hwpx
+
+    for magic, fmt in _MAGIC:
+        if not content.startswith(magic):
+            continue
+        if fmt == "ole":
+            return "hwp" if is_hwp5(content) else "ole"
+        if fmt == "zip":
+            return "hwpx" if is_hwpx(content) else "zip"
+        return fmt
+    head = content[:1024].lstrip()[:64].lower()
+    if head.startswith(b"<?xml"):
+        return "xml"
+    if head.startswith((b"<!doctype html", b"<html")):
+        return "html"
+    if head.startswith(b"<"):
+        return "html"  # a bare markup fragment; the HTML parser reads both
+    return None
+
+
+def _format_from_name(name: str) -> str | None:
+    """Fall back to the file extension when the bytes are not self-identifying."""
+    lower = name.lower()
+    for suffix, fmt in (
+        (".pdf", "pdf"), (".zip", "zip"), (".xml", "xml"), (".htm", "html"),
+        (".html", "html"), (".txt", "txt"), (".hwp", "hwp"), (".hwpx", "hwpx"),
+    ):
+        if lower.endswith(suffix):
+            return fmt
+    return None
+
+
+def _format_from(url: str, content_type: str | None, content: bytes = b"") -> str:
+    sniffed = sniff_format(content)
+    if sniffed:
+        return sniffed
     path = urlparse(url).path.lower()
     ct = (content_type or "").lower()
     if path.endswith(".pdf") or "pdf" in ct:
@@ -61,27 +124,42 @@ def _format_from(url: str, content_type: str | None) -> str:
         return "html"
     if path.endswith(".txt") or "text/plain" in ct:
         return "txt"
+    if path.endswith(".hwp"):
+        return "hwp"
+    if path.endswith(".hwpx"):
+        return "hwpx"
     return "html"  # EDGAR primary docs are usually HTML
 
 
 def _filename_from(url: str, doc_seq: int, fmt: str) -> str:
     name = Path(unquote(urlparse(url).path)).name
     if not name or "." not in name:
-        name = f"doc{doc_seq}.{fmt}"
+        return f"doc{doc_seq}.{fmt}"
+    # Keep the on-disk extension honest: DART's document.xml is really a zip, and
+    # saving it as .xml makes every later reader repeat the original mistake.
+    if _format_from_name(name) != fmt:
+        name = f"{Path(name).stem}.{fmt}"
     return name
 
 
 # ------------------------------------------------------------------ extraction
-def extract_text(content: bytes, fmt: str) -> str | None:
+def extract_text(content: bytes, fmt: str, depth: int = 0) -> str | None:
+    from .hwp_extract import hwp5_text, hwpx_text
+
     try:
         if fmt == "pdf":
             return _pdf_text(content)
-        if fmt == "zip":
-            return _zip_text(content)
+        if fmt in ("zip", "gzip"):
+            return _archive_text(content, fmt, depth)
+        if fmt == "hwp":
+            return hwp5_text(content)
+        if fmt == "hwpx":
+            return hwpx_text(content)
         if fmt in ("html", "xml"):
-            return _markup_text(content, fmt)
+            return markup_text(content, fmt)
         if fmt == "txt":
             return content.decode("utf-8", errors="replace")
+        log.warning("no text extractor for format %r", fmt)
     except Exception as exc:  # noqa: BLE001
         log.warning("text extraction (%s) failed: %s", fmt, exc)
     return None
@@ -100,7 +178,7 @@ def _pdf_text(content: bytes) -> str | None:
     return text or None  # None => likely scanned/image PDF
 
 
-def _markup_text(content: bytes, fmt: str) -> str | None:
+def markup_text(content: bytes, fmt: str) -> str | None:
     from bs4 import BeautifulSoup
 
     parser = "lxml-xml" if fmt == "xml" else "lxml"
@@ -111,20 +189,42 @@ def _markup_text(content: bytes, fmt: str) -> str | None:
     return text or None
 
 
-def _zip_text(content: bytes) -> str | None:
+def _archive_text(content: bytes, fmt: str, depth: int = 0) -> str | None:
+    """Text of an archive's members, each dispatched by its own leading bytes.
+
+    Members are identified the same way the outer document is — by content, with
+    the name only as a fallback — so a zip of PDFs, a mislabelled member or a
+    nested archive all work without adding a case here.
+    """
+    if depth >= _MAX_ARCHIVE_DEPTH:
+        log.warning("archive nested deeper than %d levels; not descending further",
+                    _MAX_ARCHIVE_DEPTH)
+        return None
+    if fmt == "gzip":
+        return _member_text(gzip.decompress(content), "", depth)
+
     parts: list[str] = []
+    total = 0
     with zipfile.ZipFile(io.BytesIO(content)) as zf:
-        for name in zf.namelist():
-            lower = name.lower()
-            if lower.endswith((".xml", ".html", ".htm")):
-                data = zf.read(name)
-                t = _markup_text(data, "xml" if lower.endswith(".xml") else "html")
-                if t:
-                    parts.append(t)
-            elif lower.endswith(".txt"):
-                parts.append(zf.read(name).decode("utf-8", errors="replace"))
+        for info in zf.infolist():
+            if info.is_dir():
+                continue
+            text = _member_text(zf.read(info), info.filename, depth)
+            if not text:
+                continue
+            parts.append(text)
+            total += len(text)
+            if total >= _MAX_TEXT:  # stop reading a pathologically large archive
+                break
     text = "\n".join(parts).strip()
     return text or None
+
+
+def _member_text(data: bytes, name: str, depth: int) -> str | None:
+    fmt = sniff_format(data) or _format_from_name(name)
+    if fmt is None:
+        return None  # an image, a font, a signature blob: nothing to read
+    return extract_text(data, fmt, depth + 1)
 
 
 # ------------------------------------------------------------------ downloading
@@ -139,7 +239,7 @@ def _download_one(
         log.warning("download failed %s: %s", url, exc)
         return None, []
     content = resp.content
-    fmt = _format_from(url, resp.headers.get("Content-Type"))
+    fmt = _format_from(url, resp.headers.get("Content-Type"), content)
     filename = _filename_from(url, doc_seq, fmt)
     dest_dir = Path(settings.docs_dir) / market / symbol / filing_id
     dest_dir.mkdir(parents=True, exist_ok=True)
@@ -182,6 +282,10 @@ def _download_one(
             log.warning("OCR failed %s: %s", url, exc)
     if text and len(text) > _MAX_TEXT:
         text = text[:_MAX_TEXT]
+    if not text:
+        # Downloaded fine but nothing came out. Say so loudly: this is how a
+        # format we do not really handle stays invisible for months.
+        log.warning("no text extracted: %s (format=%s, %d bytes)", url, fmt, len(content))
     return FilingDocument(
         company_id=company_id,
         filing_id=filing_id,
@@ -206,6 +310,7 @@ def download_filing_documents(
     sym = repo.symbol_for_company(company_id)
     market, symbol = (sym or ("NA", str(company_id)))
     n = 0
+    empty = 0
     for fl in filings:
         urls = fl.doc_urls or ([fl.url] if fl.url else [])
         for seq, url in enumerate(urls):
@@ -218,8 +323,11 @@ def download_filing_documents(
                 if tables:
                     repo.upsert_filing_tables(company_id, fl.filing_id, fl.source, seq, tables)
                 n += 1
+                empty += not doc.text_chars
         repo.commit()
-    log.info("documents: downloaded %d files for company %s (%s:%s)", n, company_id, market, symbol)
+    log.info("documents: downloaded %d files for company %s (%s:%s)%s",
+             n, company_id, market, symbol,
+             f" — {empty} with NO text extracted" if empty else "")
     return n
 
 
@@ -245,6 +353,7 @@ def backfill_documents(
     rows = _pending_rows(conn, company_ids, markets, limit)
     client = _client(settings)
     n = 0
+    empty = 0
     for row in rows:
         cid = row["company_id"]
         filing_id, source = row["filing_id"], row["source"]
@@ -264,7 +373,10 @@ def backfill_documents(
                 if tables:
                     repo.upsert_filing_tables(cid, filing_id, source, seq, tables)
                 n += 1
+                empty += not doc.text_chars
                 repo.commit()
+    log.info("backfill: downloaded %d files%s", n,
+             f" — {empty} with NO text extracted" if empty else "")
     return n
 
 

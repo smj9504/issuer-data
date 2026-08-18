@@ -115,8 +115,16 @@ original document into `data/documents/{market}/{symbol}/{filing_id}/` and extra
 text into `filing_documents.text_content`:
 
 - PDF (HKEXnews) → `pdfplumber`
-- HTML/XML (SEC EDGAR / DART) → `BeautifulSoup` + `lxml`
-- DART XBRL ZIP → unzip then parse inner XML
+- HTML/XML (SEC EDGAR) → `BeautifulSoup` + `lxml`
+- 한글 HWP 5.x → `olefile` + the HWPTAG_PARA_TEXT records; HWPX → its section XML
+- archives (DART filings, XBRL bundles) → each member extracted by the same rules,
+  recursively
+
+The format is decided by **sniffing the bytes**, not the URL or the Content-Type.
+DART's `document.xml` endpoint returns a ZIP under a Content-Type of
+`application/x-msdownload`, so every name-based guess is wrong; files are also saved
+under the extension they really are. A document that downloads but yields no text is
+logged and counted in the run summary rather than stored as a silent `text_chars=0`.
 
 Scanned/image-only PDFs yield no text layer. Pass `--ocr` (with `--download-docs` or
 `download-docs`) to render each page and OCR it with Tesseract — multilingual

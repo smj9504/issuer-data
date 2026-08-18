@@ -11,6 +11,7 @@ yfinance>=0.2.40
 # unresolvable on the 3.10-3.12 we support; >=0.2.2 lets pip take 0.2.3 where it fits.
 OpenDartReader>=0.2.2
 pdfplumber>=0.11       # PDF text extraction (HKEXnews / attachment PDFs)
+olefile>=0.46          # OLE/CFBF reader behind HWP 5.x (한글) text extraction
 beautifulsoup4>=4.12   # HTML/XML -> text (EDGAR HTML, DART XML)
 lxml>=5.2              # fast parser backend for BeautifulSoup
 
