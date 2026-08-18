@@ -10,7 +10,8 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 dependencies = [
-    "pandas>=2.2",
+    # pandas 2.2.2 dropped the numpy<2 cap, which conflicts with pykrx's numpy>=2.
+    "pandas>=2.2.2",
     "requests>=2.32",
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
@@ -18,7 +19,9 @@ dependencies = [
     "tenacity>=8.3",
     "pykrx>=1.2.8",
     "yfinance>=0.2.40",
-    "OpenDartReader>=0.2.3",
+    # OpenDartReader 0.2.3 declares Requires-Python >=3.13, so it is unusable on the
+    # 3.10-3.12 this project supports; >=0.2.2 lets pip take 0.2.3 only where it fits.
+    "OpenDartReader>=0.2.2",
     "pdfplumber>=0.11",
     "beautifulsoup4>=4.12",
     "lxml>=5.2",

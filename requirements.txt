@@ -1,5 +1,5 @@
 # Runtime dependencies (mirror of pyproject.toml [project.dependencies])
-pandas>=2.2
+pandas>=2.2.2          # 2.2.2 dropped the numpy<2 cap that pykrx's numpy>=2 hits
 requests>=2.32
 pydantic>=2.7
 pydantic-settings>=2.3
@@ -7,7 +7,9 @@ python-dotenv>=1.0
 tenacity>=8.3
 pykrx>=1.2.8
 yfinance>=0.2.40
-OpenDartReader>=0.2.3
+# 0.2.3 declares Requires-Python >=3.13, so pinning >=0.2.3 makes this whole file
+# unresolvable on the 3.10-3.12 we support; >=0.2.2 lets pip take 0.2.3 where it fits.
+OpenDartReader>=0.2.2
 pdfplumber>=0.11       # PDF text extraction (HKEXnews / attachment PDFs)
 beautifulsoup4>=4.12   # HTML/XML -> text (EDGAR HTML, DART XML)
 lxml>=5.2              # fast parser backend for BeautifulSoup
