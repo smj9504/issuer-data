@@ -19,10 +19,10 @@ def _fmp(monkeypatch, responses):
 
 def test_fmp_earnings(monkeypatch):
     c = _fmp(monkeypatch, {
-        "v3/historical/earning_calendar/AAPL": [
-            {"date": "2024-11-01", "eps": 1.64, "epsEstimated": 1.60},
-            {"date": "2025-02-01", "eps": None, "epsEstimated": 2.35},  # upcoming
-            {"date": None, "eps": 1.0},  # dropped: no date
+        "earnings": [
+            {"date": "2024-11-01", "epsActual": 1.64, "epsEstimated": 1.60},
+            {"date": "2025-02-01", "epsActual": None, "epsEstimated": 2.35},  # upcoming
+            {"date": None, "epsActual": 1.0},  # dropped: no date
         ],
     })
     events = c.fetch_earnings("AAPL")
@@ -34,12 +34,12 @@ def test_fmp_earnings(monkeypatch):
 
 def test_fmp_index_membership(monkeypatch):
     c = _fmp(monkeypatch, {
-        "v3/sp500_constituent": [
+        "sp500-constituent": [
             {"symbol": "AAPL", "dateFirstAdded": "1982-11-30"},
             {"symbol": "MSFT", "dateFirstAdded": "1994-06-01"},
         ],
-        "v3/nasdaq_constituent": [{"symbol": "AAPL", "dateFirstAdded": None}],
-        "v3/dowjones_constituent": [{"symbol": "MSFT"}],  # AAPL not in Dow
+        "nasdaq-constituent": [{"symbol": "AAPL", "dateFirstAdded": None}],
+        "dowjones-constituent": [{"symbol": "MSFT"}],  # AAPL not in Dow
     })
     rows = c.fetch_index_membership("AAPL")
     idx = {r.index_name for r in rows}
