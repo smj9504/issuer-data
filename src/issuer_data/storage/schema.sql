@@ -84,7 +84,8 @@ CREATE TABLE IF NOT EXISTS filings (
     filed_date  TEXT,
     filing_type TEXT,
     title       TEXT,
-    url         TEXT,
+    url         TEXT,                     -- primary/viewer URL
+    doc_urls    TEXT,                     -- JSON array of document URLs (primary first)
     source      TEXT NOT NULL,
     PRIMARY KEY (company_id, filing_id, source)
 );

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Iterable
 
@@ -210,14 +211,15 @@ class Repository:
     def upsert_filings(self, company_id: int, filings: Iterable[Filing]) -> int:
         n = 0
         for fl in filings:
+            doc_urls = json.dumps(fl.doc_urls or [])
             self._exec(
                 "INSERT INTO filings(company_id, filing_id, filed_date, filing_type, "
-                "title, url, source) VALUES (?,?,?,?,?,?,?) "
+                "title, url, doc_urls, source) VALUES (?,?,?,?,?,?,?,?) "
                 "ON CONFLICT(company_id, filing_id, source) DO UPDATE SET "
                 "filed_date=excluded.filed_date, filing_type=excluded.filing_type, "
-                "title=excluded.title, url=excluded.url",
+                "title=excluded.title, url=excluded.url, doc_urls=excluded.doc_urls",
                 (company_id, fl.filing_id, fl.filed_date, fl.filing_type, fl.title,
-                 fl.url, fl.source),
+                 fl.url, doc_urls, fl.source),
             )
             n += 1
         return n

@@ -8,6 +8,7 @@ is still recorded with text_content=NULL (OCR is a possible later add-on).
 from __future__ import annotations
 
 import io
+import json
 import sqlite3
 import warnings
 import zipfile
@@ -225,28 +226,55 @@ def backfill_documents(
     n = 0
     for row in rows:
         cid = row["company_id"]
+        filing_id, source = row["filing_id"], row["source"]
         sym = repo.symbol_for_company(cid)
         market, symbol = (sym or ("NA", str(cid)))
-        url = row["url"]
-        if not url:
-            continue
-        doc, tables = _download_one(client, settings, cid, row["filing_id"], row["source"],
-                                    0, url, market, symbol, extract_tables)
-        if doc is not None:
-            repo.upsert_filing_document(doc)
-            if tables:
-                repo.upsert_filing_tables(cid, row["filing_id"], row["source"], 0, tables)
-            n += 1
-            repo.commit()
+        # Prefer the persisted document list (exhibits included); fall back to the
+        # single primary url. Skip doc_seqs already downloaded so re-runs are incremental.
+        urls = _parse_doc_urls(row["doc_urls"]) or ([row["url"]] if row["url"] else [])
+        done = _downloaded_seqs(conn, cid, filing_id, source)
+        for seq, url in enumerate(urls):
+            if not url or seq in done:
+                continue
+            doc, tables = _download_one(client, settings, cid, filing_id, source,
+                                        seq, url, market, symbol, extract_tables)
+            if doc is not None:
+                repo.upsert_filing_document(doc)
+                if tables:
+                    repo.upsert_filing_tables(cid, filing_id, source, seq, tables)
+                n += 1
+                repo.commit()
     return n
 
 
+def _parse_doc_urls(raw) -> list[str]:
+    if not raw:
+        return []
+    try:
+        val = json.loads(raw)
+        return [u for u in val if u] if isinstance(val, list) else []
+    except (ValueError, TypeError):
+        return []
+
+
+def _downloaded_seqs(conn, company_id, filing_id, source) -> set[int]:
+    rows = conn.execute(
+        "SELECT doc_seq FROM filing_documents WHERE company_id=? AND filing_id=? AND source=?",
+        (company_id, filing_id, source),
+    ).fetchall()
+    return {r["doc_seq"] for r in rows}
+
+
 def _pending_rows(conn, company_ids, markets, limit):
+    # A filing is pending while it has fewer downloaded documents than its
+    # persisted doc_urls list (>= 1 for the primary), so exhibits are picked up on
+    # a later backfill even after doc_seq=0 was fetched.
     sql = (
-        "SELECT f.company_id, f.filing_id, f.source, f.url FROM filings f "
+        "SELECT f.company_id, f.filing_id, f.source, f.url, f.doc_urls FROM filings f "
         "JOIN securities s ON s.company_id=f.company_id "
-        "WHERE NOT EXISTS (SELECT 1 FROM filing_documents d WHERE d.company_id=f.company_id "
-        "AND d.filing_id=f.filing_id AND d.source=f.source)"
+        "WHERE (SELECT COUNT(*) FROM filing_documents d WHERE d.company_id=f.company_id "
+        "  AND d.filing_id=f.filing_id AND d.source=f.source) "
+        "  < MAX(1, COALESCE(json_array_length(f.doc_urls), 1))"
     )
     params: list = []
     if company_ids:
