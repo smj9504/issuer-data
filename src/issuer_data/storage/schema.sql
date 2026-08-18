@@ -122,6 +122,7 @@ CREATE TABLE IF NOT EXISTS filing_tables (
     page_start    INTEGER,
     page_end      INTEGER,                 -- > page_start when the table was stitched
     confidence    REAL,
+    needs_review  INTEGER DEFAULT 0,       -- 1 = below the confidence threshold, not resolved
     source_engine TEXT,
     PRIMARY KEY (company_id, filing_id, source, doc_seq, table_seq, row_idx, col_idx)
 );

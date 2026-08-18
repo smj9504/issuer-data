@@ -254,10 +254,11 @@ class Repository:
                     self._exec(
                         "INSERT INTO filing_tables(company_id, filing_id, source, doc_seq, "
                         "table_seq, row_idx, col_idx, value, page_start, page_end, "
-                        "confidence, source_engine) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                        "confidence, needs_review, source_engine) "
+                        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         (company_id, filing_id, source, doc_seq, table_seq, row_idx,
                          col_idx, value, tbl.page_start, tbl.page_end, tbl.confidence,
-                         tbl.source_engine),
+                         1 if getattr(tbl, "needs_review", False) else 0, tbl.source_engine),
                     )
                     n += 1
         return n

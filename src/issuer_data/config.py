@@ -35,6 +35,19 @@ class Settings(BaseSettings):
     docs_dir: Path = Path("data/documents")
     overrides_path: Path = Path("data/company_overrides.csv")
 
+    # --- PDF structured extraction / escalation -----------------------------
+    # The structured PDF engine runs locally and free. Escalation re-processes
+    # ONLY low-confidence tables through a paid LLM — off, and local-only, by
+    # default. local_only=True hard-blocks any off-box call even if enabled, so
+    # sensitive documents never leave the machine unless explicitly opted in.
+    pdf_escalation_enabled: bool = False
+    pdf_local_only: bool = True
+    pdf_confidence_threshold: float = 0.66   # tables below this are escalated / flagged
+    escalation_api_key: str | None = None
+    escalation_endpoint: str = "https://api.anthropic.com/v1/messages"
+    escalation_model: str = "claude-sonnet-4-5"
+    escalation_cost_per_page: float = 0.02   # for the cost-accounting log only
+
     # --- HTTP / rate limiting ----------------------------------------------
     http_timeout: float = 30.0
     max_retries: int = 4

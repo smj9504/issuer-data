@@ -148,13 +148,23 @@ def _download_one(
     tables: list = []
     text: str | None = None
     if extract_tables and fmt == "pdf":
-        # Structured pass: cross-page-stitched tables + reflowed narrative.
+        # Structured pass: cross-page-stitched tables + reflowed narrative, with
+        # optional (config-gated) escalation of the low-confidence tail.
         try:
+            from .pdf_escalate import build_escalator
             from .pdf_extract import extract_structured
 
-            doc = extract_structured(content)
+            escalator = build_escalator(settings)
+            doc = extract_structured(
+                content, escalator=escalator,
+                threshold=settings.pdf_confidence_threshold,
+                cost_per_page=settings.escalation_cost_per_page,
+            )
             tables = doc.tables
             text = doc.text or None
+            if doc.escalated_count:
+                log.info("escalated %d low-confidence table(s) for %s (est. cost $%.3f)",
+                         doc.escalated_count, url, doc.est_cost)
         except Exception as exc:  # noqa: BLE001
             log.warning("structured PDF extract failed %s: %s", url, exc)
     if text is None:

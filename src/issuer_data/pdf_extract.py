@@ -40,6 +40,7 @@ class StitchedTable:
     page_end: int
     confidence: float = 1.0
     source_engine: str = "pdfplumber"
+    needs_review: bool = False
 
 
 @dataclass
@@ -47,6 +48,8 @@ class StructuredDoc:
     text: str = ""
     tables: list[StitchedTable] = field(default_factory=list)
     page_count: int = 0
+    escalated_count: int = 0
+    est_cost: float = 0.0
 
 
 # --------------------------------------------------------------- intermediate
@@ -272,8 +275,52 @@ def _parse_pages(pdf) -> list[dict]:
     return pages
 
 
-def extract_structured(content: bytes) -> StructuredDoc:
+def _page_text_map(pages: list[dict]) -> dict[int, str]:
+    return {p["page_no"]: "\n".join(ln["text"] for ln in p["lines"]) for p in pages}
+
+
+def apply_escalation(tables: list[StitchedTable], page_text: dict[int, str], raw_text: str,
+                     *, escalator, threshold: float, cost_per_page: float) -> tuple[int, float]:
+    """Flag + optionally re-process low-confidence tables. Returns (count, est_cost).
+
+    Grounding is the meaningful anti-hallucination check for *escalation output*
+    (a paid engine could invent numbers absent from the page), so escalated rows
+    are re-grounded against the page's raw text; the local engine, which reads the
+    same text layer, is already self-consistent.
+    """
+    from .pdf_escalate import NullEscalator
+
+    use = escalator is not None and not isinstance(escalator, NullEscalator)
+    escalated = 0
+    est_cost = 0.0
+    for t in tables:
+        if t.confidence >= threshold:
+            continue
+        t.needs_review = True
+        if not use:
+            continue
+        context = "\n".join(page_text.get(pg, "") for pg in range(t.page_start, t.page_end + 1))
+        col_count = max((len(r) for r in t.rows), default=0)
+        new_rows = escalator.escalate(t.rows, context, col_count)
+        est_cost += cost_per_page * (t.page_end - t.page_start + 1)
+        escalated += 1
+        if new_rows:
+            t.rows = new_rows
+            t.confidence = ground_numbers(new_rows, raw_text)
+            t.source_engine = getattr(escalator, "name", "escalated")
+            t.needs_review = t.confidence < threshold
+    return escalated, est_cost
+
+
+def extract_structured(content: bytes, escalator=None, threshold: float = 0.66,
+                       cost_per_page: float = 0.0) -> StructuredDoc:
     """Parse a PDF into stitched tables + reflowed narrative with grounding.
+
+    Tables below ``threshold`` grounding confidence are flagged ``needs_review``.
+    When an ``escalator`` is given (see ``pdf_escalate``), each low-confidence
+    table is re-processed by it; on success the rows are replaced, re-grounded,
+    the ``source_engine`` updated and the review flag cleared. Escalation cost is
+    accounted per escalated table span.
 
     Returns an empty doc (not an error) for a scanned/image-only PDF that yields
     no text layer — OCR is a later escalation.
@@ -282,11 +329,17 @@ def extract_structured(content: bytes) -> StructuredDoc:
 
     with pdfplumber.open(io.BytesIO(content)) as pdf:
         pages = _parse_pages(pdf)
-    raw_text = "\n".join(
-        ln["text"] for p in pages for ln in p["lines"]
-    )
+    raw_text = "\n".join(ln["text"] for p in pages for ln in p["lines"])
+    page_text = _page_text_map(pages)
     tables = stitch_tables(pages)
     for t in tables:
         t.confidence = ground_numbers(t.rows, raw_text)
+
+    escalated, est_cost = apply_escalation(
+        tables, page_text, raw_text,
+        escalator=escalator, threshold=threshold, cost_per_page=cost_per_page,
+    )
+
     text = reflow_narrative(pages)
-    return StructuredDoc(text=text, tables=tables, page_count=len(pages))
+    return StructuredDoc(text=text, tables=tables, page_count=len(pages),
+                         escalated_count=escalated, est_cost=est_cost)
