@@ -268,11 +268,12 @@ CREATE TABLE IF NOT EXISTS insider_trades (
     filed_date  TEXT NOT NULL,
     insider     TEXT NOT NULL,
     relation    TEXT,                    -- officer/director/10% owner
-    txn_type    TEXT,                    -- buy/sell (A/D)
+    txn_type    TEXT NOT NULL DEFAULT 'hold',  -- 'buy'/'sell'/'hold' (non-NULL for a stable PK)
+    txn_seq     INTEGER NOT NULL DEFAULT 0,    -- distinguishes multiple txns in one filing
     shares      REAL, price REAL,
-    filing_id   TEXT,
+    filing_id   TEXT NOT NULL DEFAULT '',
     source      TEXT NOT NULL,
-    PRIMARY KEY (company_id, filed_date, insider, txn_type, filing_id, source)
+    PRIMARY KEY (company_id, filed_date, insider, txn_type, txn_seq, filing_id, source)
 );
 
 -- Earnings events (calendar; transcripts stored via filing_documents) ---------

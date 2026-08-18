@@ -30,6 +30,24 @@ def cik10(cik: str | int) -> str:
     return str(int(cik)).zfill(10)
 
 
+_CF_HINTS = ("cashflow", "netcashprovided", "netcashused", "proceedsfrom", "paymentsto",
+             "paymentsfor", "paymentsofdividends", "cashandcashequivalentsperiod")
+
+
+def _stmt_type(concept: str, has_start: bool) -> str:
+    """Classify a companyfacts concept into IS/BS/CF.
+
+    Instant facts (no period `start`) are balance-sheet stocks; duration facts are
+    income-statement flows unless the concept name signals cash flow.
+    """
+    if not has_start:
+        return "BS"
+    c = concept.lower()
+    if any(h in c for h in _CF_HINTS):
+        return "CF"
+    return "IS"
+
+
 def _xml_text(node, tag: str) -> str | None:
     el = node.find(tag)
     return el.get_text(strip=True) if el else None
@@ -137,6 +155,10 @@ class EdgarCollector(BaseCollector):
             import datetime as _dt
 
             min_year = _dt.date.today().year - years
+        # Dedupe to one point per (fy, fp, statement_type, account, unit) so that
+        # restated comparatives / YTD-vs-quarter / amendments don't collapse onto the
+        # financials PK last-write-wins. Winner = has an SEC `frame` (canonical) > latest filed.
+        best: dict[tuple, tuple] = {}
         for taxonomy in ("us-gaap", "ifrs-full"):
             concepts = taxonomies.get(taxonomy, {})
             for concept, node in concepts.items():
@@ -148,26 +170,24 @@ class EdgarCollector(BaseCollector):
                             continue
                         fy = p.get("fy")
                         fp = p.get("fp") or "FY"
-                        if fy is None:
+                        if fy is None or (min_year is not None and fy < min_year):
                             continue
-                        if min_year is not None and fy < min_year:
-                            continue
-                        out.append(
-                            FinancialFact(
-                                symbol=symbol,
-                                market="US",
-                                fiscal_year=int(fy),
-                                fiscal_period="FY" if fp == "FY" else fp,
-                                statement_type=None,
-                                account=concept,
-                                account_local=label,
-                                value=p.get("val"),
-                                currency=currency,
-                                unit=unit,
-                                period_end=p.get("end"),
-                                source="edgar",
-                            )
-                        )
+                        stmt = _stmt_type(concept, has_start="start" in p)
+                        key = (int(fy), "FY" if fp == "FY" else fp, stmt, concept, unit)
+                        rank = (1 if p.get("frame") else 0, p.get("filed") or "", p.get("end") or "")
+                        prev = best.get(key)
+                        if prev is None or rank > prev[0]:
+                            best[key] = (rank, concept, label, unit, currency, p)
+        out: list[FinancialFact] = []
+        for (fy, fp, stmt, concept, _unit), (_rank, _c, label, unit, currency, p) in best.items():
+            out.append(
+                FinancialFact(
+                    symbol=symbol, market="US", fiscal_year=fy, fiscal_period=fp,
+                    statement_type=stmt, account=concept, account_local=label,
+                    value=p.get("val"), currency=currency, unit=unit,
+                    period_end=p.get("end"), source="edgar",
+                )
+            )
         return out
 
     # --------------------------------------------------------------- filings
@@ -282,17 +302,17 @@ class EdgarCollector(BaseCollector):
         title = _xml_text(soup, "officerTitle")
         relation = title or ("director" if is_dir else "officer" if is_off else None)
         rows: list = []
-        for txn in soup.find_all("nonDerivativeTransaction"):
+        for seq, txn in enumerate(soup.find_all("nonDerivativeTransaction")):
             shares = _xml_val(txn, "transactionShares")
             price = _xml_val(txn, "transactionPricePerShare")
             ad = _xml_text(txn, "transactionAcquiredDisposedCode")
             rows.append(InsiderTrade(
                 symbol=symbol, market="US", filed_date=filed or "",
                 insider=insider, relation=relation,
-                txn_type="buy" if ad == "A" else "sell" if ad == "D" else ad,
-                shares=shares, price=price, filing_id=acc, source="edgar"))
+                txn_type="buy" if ad == "A" else "sell" if ad == "D" else (ad or "hold"),
+                txn_seq=seq, shares=shares, price=price, filing_id=acc, source="edgar"))
         if not rows:  # holding-only Form 4 (no transaction) — still record the filing
             rows.append(InsiderTrade(symbol=symbol, market="US", filed_date=filed or "",
-                                     insider=insider, relation=relation, filing_id=acc,
-                                     source="edgar"))
+                                     insider=insider, relation=relation, txn_type="hold",
+                                     filing_id=acc, source="edgar"))
         return rows

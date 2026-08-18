@@ -207,6 +207,12 @@ class Orchestrator:
             collector = build_collector(src, self.settings)
             collector._current_market = market
             method = getattr(collector, method_name)
+            # If the collector doesn't override the coverage method, mark 'skipped'
+            # up-front so an unimplemented type never shows 'ok' with 0 rows (which
+            # happens when the symbol list is empty and the method is never called).
+            from .collectors.base import BaseCollector
+            if getattr(type(collector), method_name) is getattr(BaseCollector, method_name):
+                raise NotSupportedError(f"{src} does not implement {data_type}")
             syms = self._resolve_symbols(market, symbols)
             self.ensure_master(market, syms)
             if dated:

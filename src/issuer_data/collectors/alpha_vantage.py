@@ -110,12 +110,15 @@ class AlphaVantageCollector(BaseCollector):
             d = self._get(function, symbol=symbol)
             if not d:
                 continue
-            for key, period in (("annualReports", "FY"), ("quarterlyReports", "Q")):
+            for key, annual in (("annualReports", True), ("quarterlyReports", False)):
                 for rec in d.get(key, []) or []:
                     end_date = rec.get("fiscalDateEnding", "")
                     year = _i(end_date[:4]) if end_date else None
                     if year is None:
                         continue
+                    # Derive Q1..Q4 from the period-end month so quarters don't
+                    # all collide on one PK (they used to be stored as "Q").
+                    period = "FY" if annual else _quarter_of(end_date)
                     currency = rec.get("reportedCurrency")
                     for account, value in rec.items():
                         if account in _META_KEYS:
@@ -138,6 +141,15 @@ class AlphaVantageCollector(BaseCollector):
                             )
                         )
         return out
+
+
+def _quarter_of(end_date: str) -> str:
+    """Map a fiscalDateEnding 'YYYY-MM-DD' to Q1..Q4 by its month (fallback 'Q')."""
+    try:
+        month = int(end_date[5:7])
+        return f"Q{(month - 1) // 3 + 1}"
+    except (ValueError, IndexError):
+        return "Q"
 
 
 def _ccy(market: str) -> str:
