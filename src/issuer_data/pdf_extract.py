@@ -41,6 +41,10 @@ class StitchedTable:
     confidence: float = 1.0
     source_engine: str = "pdfplumber"
     needs_review: bool = False
+    # Grid consistency reported by the detector. Grounding cannot judge this: a
+    # locally-read table always grounds at 1.0 because its digits come from the
+    # same text layer, so a ragged detection would otherwise pass as clean.
+    structure_confidence: float = 1.0
 
 
 @dataclass
@@ -57,7 +61,8 @@ class StructuredDoc:
 #   {"page_no": int, "width": float, "height": float,
 #    "lines":  [{"text": str, "x0": float, "x1": float, "top": float, "bottom": float}, ...],
 #    "tables": [{"bbox": (x0, top, x1, bottom), "col_x": [float, ...],
-#                "rows": [[cell|None, ...], ...]}, ...]}
+#                "rows": [[cell|None, ...], ...],
+#                "source_engine": str, "structure_confidence": float}, ...]}
 # Pure functions below consume this shape, so tests can build it directly.
 
 
@@ -117,8 +122,11 @@ def stitch_tables(
                 open_tbl.rows.extend(body)
                 open_tbl.page_end = page["page_no"]
             else:
-                open_tbl = StitchedTable(rows=rows, page_start=page["page_no"],
-                                         page_end=page["page_no"])
+                open_tbl = StitchedTable(
+                    rows=rows, page_start=page["page_no"], page_end=page["page_no"],
+                    source_engine=tbl.get("source_engine") or "pdfplumber",
+                    structure_confidence=float(tbl.get("structure_confidence", 1.0)),
+                )
                 stitched.append(open_tbl)
                 open_sig = sig
             open_ended_low = bottom >= height * bottom_frac
@@ -271,6 +279,17 @@ def _parse_pages(pdf) -> list[dict]:
                 })
         except Exception as exc:  # noqa: BLE001
             log.debug("find_tables failed on p%s: %s", page.page_number, exc)
+        if not rep["tables"]:
+            # No ruling lines here. Results announcements and annual reports hold
+            # their columns apart with whitespace, so fall back to reconstructing
+            # the grid. Only on pages the ruled pass left empty, so a document it
+            # already handles cannot regress.
+            try:
+                from .pdf_columns import find_column_tables
+
+                rep["tables"].extend(find_column_tables(page))
+            except Exception as exc:  # noqa: BLE001
+                log.debug("column detection failed on p%s: %s", page.page_number, exc)
         pages.append(rep)
     return pages
 
@@ -333,7 +352,9 @@ def extract_structured(content: bytes, escalator=None, threshold: float = 0.66,
     page_text = _page_text_map(pages)
     tables = stitch_tables(pages)
     for t in tables:
-        t.confidence = ground_numbers(t.rows, raw_text)
+        # Grounding catches invented numbers, structure catches a bad grid; a
+        # table has to satisfy both, so the weaker one decides.
+        t.confidence = min(ground_numbers(t.rows, raw_text), t.structure_confidence)
 
     escalated, est_cost = apply_escalation(
         tables, page_text, raw_text,

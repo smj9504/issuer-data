@@ -152,6 +152,14 @@ python -m issuer_data collect --market hk --type filings --symbols 00700 \
     --download-docs --extract-tables
 ```
 
+- **Two table detectors** — filled-in forms (HKEX Monthly Returns, Next Day Disclosure
+  Returns) are found by their ruling lines. Results announcements and annual reports draw
+  no rules at all, holding their columns apart with whitespace, so pages the ruled pass
+  leaves empty go through a geometry pass that rebuilds the grid from word positions:
+  cells split at gaps wide relative to the font, rows kept only where a column grid holds
+  for several lines and the columns past the first are mostly numeric (so justified prose
+  is not mistaken for a table), and right-aligned header rows pulled back in. Each table
+  records which found it in `filing_tables.source_engine` (`pdfplumber` / `column-geometry`).
 - **Cross-page table stitching** — a table broken by a page break is rejoined when the
   previous page's table ends at the bottom margin, the next page's starts at the top
   margin, and their column x-signatures match; a repeated header row on the continuation
@@ -161,13 +169,16 @@ python -m issuer_data collect --market hk --type filings --symbols 00700 \
   across pages, not a pattern list) are removed, line-end hyphenation is joined, and
   paragraphs split across lines/pages are merged into continuous text (CJK joined without
   inserted spaces). The reflowed text replaces the flat per-page blob in `text_content`.
-- **Numeric grounding** — every number emitted in a table is checked against the raw text
-  layer; the grounded fraction is stored as `filing_tables.confidence`, an
-  anti-hallucination guard and the signal escalation keys on. Tables below the confidence
-  threshold are marked `filing_tables.needs_review=1`.
+- **Numeric grounding + grid consistency** — every number emitted in a table is checked
+  against the raw text layer, an anti-hallucination guard on escalation output. Grounding
+  alone cannot judge a *locally* read table, whose digits come from that same text layer
+  and so always ground at 1.0, so a detection is also scored on how consistently its body
+  holds one column count. The weaker of the two is stored as `filing_tables.confidence`
+  and is the signal escalation keys on; tables below the threshold are marked
+  `filing_tables.needs_review=1`.
 
-The front-end uses `pdfplumber`; heavier local layout engines (Docling / Table Transformer)
-are a later add-on.
+The front-end uses `pdfplumber` plus the geometry pass above; heavier local layout engines
+(Docling / Table Transformer) are a later add-on.
 
 #### Optional paid escalation (off + local-only by default)
 
