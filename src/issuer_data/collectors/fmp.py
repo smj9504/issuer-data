@@ -299,6 +299,44 @@ class FmpCollector(BaseCollector):
                 shares=r.get("shares"), value=r.get("marketValue"), source="fmp"))
         return out
 
+    def fetch_earnings(self, symbol: str):
+        from ..models import EarningsEvent
+
+        # Historical + upcoming earnings calendar for the ticker.
+        data = self._get(f"v3/historical/earning_calendar/{self._sym(symbol)}", limit=80)
+        out: list = []
+        for r in (data if isinstance(data, list) else []):
+            date = to_iso(r.get("date"))
+            if not date:
+                continue
+            out.append(EarningsEvent(
+                symbol=symbol, market=self._current_market, event_date=date,
+                event_type="earnings", fiscal_period=None,
+                eps_estimate=r.get("epsEstimated"), eps_actual=r.get("eps"),
+                source="fmp"))
+        return out
+
+    def fetch_index_membership(self, symbol: str):
+        from ..models import IndexMembership
+
+        # FMP's constituent lists are US-only (S&P 500 / Nasdaq 100 / Dow Jones).
+        if self._current_market != "US":
+            raise NotSupportedError("FMP index membership is US-only")
+        target = self._sym(symbol).upper()
+        out: list = []
+        for index_name, endpoint in (("S&P500", "sp500_constituent"),
+                                     ("NASDAQ100", "nasdaq_constituent"),
+                                     ("DOWJONES", "dowjones_constituent")):
+            data = self._get(f"v3/{endpoint}")
+            for r in (data if isinstance(data, list) else []):
+                if str(r.get("symbol", "")).upper() == target:
+                    out.append(IndexMembership(
+                        symbol=symbol, market=self._current_market,
+                        index_name=index_name, added=to_iso(r.get("dateFirstAdded")),
+                        source="fmp"))
+                    break
+        return out
+
     # -------------------------------------------------------------------- fx
     def fetch_fx(self, pairs: list[tuple[str, str]], start: str, end: str) -> list[FxRate]:
         start, end = default_range(start, end)

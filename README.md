@@ -156,21 +156,26 @@ python -m issuer_data collect --market us --type ratios   --symbols AAPL   # nee
 
 | category | free source(s) | notes |
 |----------|----------------|-------|
+| category | free source(s) implemented | notes |
+|----------|----------------------------|-------|
 | identifiers / LEI | SEC, DART, GLEIF | LEI via GLEIF (no key) |
-| market cap / shares | FMP, yfinance | foreign-ownership % = KRX login only |
+| market cap / shares | FMP | foreign-ownership % = KRX login only |
 | ratios / valuation | FMP (+ computed) | US strongest |
-| ownership (major/5%) | DART, FMP | US 13D/G structured = partial |
-| institutional (13F) | FMP, EDGAR | |
-| corporate actions | yfinance, FMP, DART | free via Yahoo |
+| ownership (major/5%) | **DART** (majorstock 5%+) | US 13D/G has no free structured source → skipped |
+| institutional (13F) | FMP | via FMP institutional-holder |
+| corporate actions | yfinance, FMP | free via Yahoo |
 | analyst / targets | FMP | US-centric |
-| insider trades | **SEC Form 4 (free)**, DART | fully parsed (name/role/shares/price) |
-| earnings / transcripts | FMP, AV | transcripts → documents |
-| news / sentiment | FMP, AV | |
-| index membership | FMP (US indices) | KR/HK not free |
+| insider trades | **SEC Form 4 (free)**, **DART** (임원·주요주주) | US: name/role/shares/price; KR: exec/major-holder reports |
+| earnings | **FMP** (earnings calendar) | US-centric |
+| news / sentiment | FMP | |
+| index membership | **FMP** (S&P 500 / Nasdaq 100 / Dow, US) | KR/HK not free → skipped |
 | ESG | FMP (tier-gated) | sustainability reports → documents |
 
-Honest gaps (land as empty columns, logged — never fabricated): **foreign-ownership %**
-(KRX login), **KR/HK index-membership history**, granular ESG grades.
+The first column lists only sources that are **actually wired** to a collector method; a
+`--type` with no implemented source for a market records a `skipped` run (never `ok` with
+0 rows) and writes nothing. Honest gaps (empty, logged — never fabricated): **US ownership
+(13D/G)**, **foreign-ownership %** (KRX login), **KR/HK index-membership history**,
+earnings-call transcripts, granular ESG grades.
 
 ## Notes & limitations
 

@@ -1,7 +1,7 @@
 """Offline test: EdgarCollector parses companyfacts/submissions JSON into models."""
 
-from issuer_data.config import Settings
 from issuer_data.collectors.us_edgar import EdgarCollector
+from issuer_data.config import Settings
 
 COMPANYFACTS = {
     "cik": 320193,

@@ -1,6 +1,8 @@
 """Offline tests for the Extension-B/C coverage layer and correctness fixes."""
 
+from issuer_data.config import Settings
 from issuer_data.models import Company, FinancialFact, InsiderTrade, Security
+from issuer_data.orchestrator import Orchestrator
 from issuer_data.services import _latest_metric
 from issuer_data.storage.repository import Repository
 
@@ -12,8 +14,8 @@ def _company(repo, cid_name="ACME"):
 
 
 def test_insider_idempotent_and_multi_txn(conn):
-    repo = _company_repo = Repository(conn)
-    cid = _company(repo)
+    repo = Repository(conn)
+    _company(repo)
     # two transactions in one filing on the same day, same acquired/disposed code
     rows = [
         InsiderTrade(symbol="ACME", market="US", filed_date="2024-11-07", insider="DOE JANE",
@@ -51,3 +53,15 @@ def test_latest_metric_prefers_cfs_fy(conn):
     repo.commit()
     # must pick the CFS + FY figure (1000), not the quarterly (300) or separate (800)
     assert _latest_metric(conn, cid, ("Revenues",)) == 1000.0
+
+
+def test_unimplemented_coverage_type_is_skipped(conn):
+    # yfinance implements no fetch_ratios -> the run must record 'skipped', never
+    # 'ok' with 0 rows (the base-collector override probe short-circuits up front).
+    orch = Orchestrator(conn, Settings())
+    orch.collect_coverage("US", "ratios", source="yfinance",
+                          symbols=["AAPL"], start=None, end=None)
+    status = conn.execute(
+        "SELECT status FROM collection_runs ORDER BY run_id DESC LIMIT 1"
+    ).fetchone()[0]
+    assert status == "skipped"
