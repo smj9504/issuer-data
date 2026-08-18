@@ -1,11 +1,20 @@
 """Financial Modeling Prep (FMP) collector: global master, prices, financials, filings, peers.
 
 Standalone REST client (financialmodelingprep.com) using an API key from config —
-NOT the MCP server, so the project stays reusable. Free tier is limited
-(~250 req/day, some endpoints US-only).
+NOT the MCP server, so the project stays reusable.
+
+Uses FMP's current "stable" API (financialmodelingprep.com/stable). The old
+`/api/v3` and `/api/v4` endpoints were retired on 2025-08-31 and now return a
+"Legacy Endpoint" error for keys created after that date. The free tier is
+limited: it covers US symbols only for prices/statements, ~250 req/day, and
+several endpoints (news, ESG, institutional ownership, index constituents,
+SEC filing search) are premium-only — those return HTTP 4xx and are skipped
+cleanly rather than aborting the run.
 """
 
 from __future__ import annotations
+
+import requests
 
 from ..config import Settings
 from ..http.client import HttpClient
@@ -16,7 +25,10 @@ from .base import BaseCollector, NotSupportedError
 
 log = get_logger(__name__)
 
-_BASE = "https://financialmodelingprep.com/api"
+_BASE = "https://financialmodelingprep.com/stable"
+
+# HTTP statuses FMP uses for "not on your plan" / bad request — skip, don't abort.
+_PLAN_LIMITED = {400, 401, 402, 403}
 
 # statement -> (endpoint, our statement_type, key accounts we keep as-is [all kept])
 _STATEMENTS = [
@@ -27,7 +39,7 @@ _STATEMENTS = [
 # metadata keys in a statement record that are not financial line items
 _META_KEYS = {
     "date", "symbol", "reportedCurrency", "cik", "fillingDate", "filingDate",
-    "acceptedDate", "calendarYear", "period", "link", "finalLink",
+    "acceptedDate", "calendarYear", "fiscalYear", "period", "link", "finalLink",
 }
 
 
@@ -60,8 +72,17 @@ class FmpCollector(BaseCollector):
         self.client = HttpClient(rate_limit=settings.fmp_rate_limit)
 
     def _get(self, path: str, **params):
+        """GET a stable endpoint. Returns parsed JSON, or None when the endpoint
+        is unavailable on the current plan (HTTP 4xx) so callers skip it cleanly."""
         params["apikey"] = self.api_key
-        return self.client.get_json(f"{_BASE}/{path}", params=params)
+        try:
+            return self.client.get_json(f"{_BASE}/{path}", params=params)
+        except requests.HTTPError as exc:
+            status = exc.response.status_code if exc.response is not None else None
+            if status in _PLAN_LIMITED:
+                log.warning("FMP %s unavailable on this plan (HTTP %s) — skipping", path, status)
+                return None
+            raise
 
     def _sym(self, symbol: str) -> str:
         return fmp_symbol(self._current_market, symbol)
@@ -72,7 +93,7 @@ class FmpCollector(BaseCollector):
             raise NotSupportedError("FMP master requires explicit --symbols")
         out: list[SecurityRecord] = []
         for symbol in symbols:
-            data = self._get(f"v3/profile/{self._sym(symbol)}")
+            data = self._get("profile", symbol=self._sym(symbol))
             if not data:
                 continue
             p = data[0]
@@ -87,7 +108,7 @@ class FmpCollector(BaseCollector):
                     isin=p.get("isin"),
                     cik=_pad_cik(p.get("cik")),
                     currency=p.get("currency"),
-                    exchange=p.get("exchangeShortName"),
+                    exchange=p.get("exchange") or p.get("exchangeShortName"),
                     website=p.get("website"),
                     security_type="COMMON",
                     is_primary=True,
@@ -99,8 +120,9 @@ class FmpCollector(BaseCollector):
     # --------------------------------------------------------------- prices
     def fetch_prices(self, symbol: str, start: str, end: str) -> list[Price]:
         start, end = default_range(start, end)
-        data = self._get(f"v3/historical-price-full/{self._sym(symbol)}", **{"from": start, "to": end})
-        hist = data.get("historical") if isinstance(data, dict) else None
+        data = self._get("historical-price-eod/full", symbol=self._sym(symbol),
+                         **{"from": start, "to": end})
+        hist = _rows(data)
         if not hist:
             return []
         out: list[Price] = []
@@ -128,12 +150,12 @@ class FmpCollector(BaseCollector):
         out: list[FinancialFact] = []
         for endpoint, sttype in _STATEMENTS:
             for period_kind in ("annual", "quarter"):
-                data = self._get(f"v3/{endpoint}/{self._sym(symbol)}",
-                                 period=period_kind, limit=limit if period_kind == "annual" else limit * 4)
+                data = self._get(endpoint, symbol=self._sym(symbol), period=period_kind,
+                                 limit=limit if period_kind == "annual" else limit * 4)
                 if not isinstance(data, list):
                     continue
                 for rec in data:
-                    year = _int(rec.get("calendarYear"))
+                    year = _int(rec.get("fiscalYear") or rec.get("calendarYear"))
                     if year is None:
                         continue
                     period = _period(rec.get("period"))
@@ -161,7 +183,8 @@ class FmpCollector(BaseCollector):
     # --------------------------------------------------------------- filings
     def fetch_filings(self, symbol: str, start: str, end: str) -> list[Filing]:
         start, end = default_range(start, end, default_years=2)
-        data = self._get(f"v3/sec_filings/{self._sym(symbol)}", limit=100)
+        data = self._get("sec-filings-search/symbol", symbol=self._sym(symbol),
+                         limit=100, **{"from": start, "to": end})
         if not isinstance(data, list):
             return []
         out: list[Filing] = []
@@ -187,9 +210,12 @@ class FmpCollector(BaseCollector):
 
     # ----------------------------------------------------------------- peers
     def fetch_peers(self, symbol: str) -> list[str]:
-        data = self._get("v4/stock_peers", symbol=self._sym(symbol))
-        if isinstance(data, list) and data:
-            return list(data[0].get("peersList", []))
+        data = self._get("stock-peers", symbol=self._sym(symbol))
+        if isinstance(data, list):
+            # stable returns [{symbol, companyName, ...}]; legacy was [{peersList: [...]}]
+            if data and "peersList" in data[0]:
+                return list(data[0].get("peersList", []))
+            return [str(r["symbol"]) for r in data if r.get("symbol")]
         return []
 
     # --------------------------------------------------- Extension B coverage
@@ -197,7 +223,7 @@ class FmpCollector(BaseCollector):
         from ..models import DailyMetric
 
         start, end = default_range(start, end)
-        data = self._get(f"v3/historical-market-capitalization/{self._sym(symbol)}",
+        data = self._get("historical-market-capitalization", symbol=self._sym(symbol),
                          limit=500, **{"from": start, "to": end})
         out: list = []
         if isinstance(data, list):
@@ -212,15 +238,16 @@ class FmpCollector(BaseCollector):
 
         out: list = []
         for endpoint in ("ratios", "key-metrics"):
-            data = self._get(f"v3/{endpoint}/{self._sym(symbol)}", period="annual", limit=years or 5)
+            data = self._get(endpoint, symbol=self._sym(symbol), period="annual", limit=years or 5)
             if not isinstance(data, list):
                 continue
             for rec in data:
-                year = _int(rec.get("calendarYear")) or _year_of(rec.get("date"))
+                year = _int(rec.get("fiscalYear") or rec.get("calendarYear")) or _year_of(rec.get("date"))
                 if year is None:
                     continue
                 for metric, value in rec.items():
-                    if metric in ("symbol", "date", "calendarYear", "period") \
+                    if metric in ("symbol", "date", "calendarYear", "fiscalYear",
+                                  "period", "reportedCurrency") \
                             or not isinstance(value, (int, float)):
                         continue
                     out.append(Ratio(symbol=symbol, market=self._current_market,
@@ -232,14 +259,14 @@ class FmpCollector(BaseCollector):
         from ..models import CorporateAction
 
         out: list = []
-        div = self._get(f"v3/historical-price-full/stock_dividend/{self._sym(symbol)}")
-        for r in (div.get("historical", []) if isinstance(div, dict) else []):
+        div = self._get("dividends", symbol=self._sym(symbol))
+        for r in _rows(div):
             out.append(CorporateAction(symbol=symbol, market=self._current_market,
                                        ex_date=to_iso(r.get("date")), action_type="dividend",
                                        amount=r.get("dividend") or r.get("adjDividend"),
                                        currency=_ccy(self._current_market), source="fmp"))
-        spl = self._get(f"v3/historical-price-full/stock_split/{self._sym(symbol)}")
-        for r in (spl.get("historical", []) if isinstance(spl, dict) else []):
+        spl = self._get("splits", symbol=self._sym(symbol))
+        for r in _rows(spl):
             num, den = r.get("numerator"), r.get("denominator")
             out.append(CorporateAction(symbol=symbol, market=self._current_market,
                                        ex_date=to_iso(r.get("date")), action_type="split",
@@ -249,25 +276,25 @@ class FmpCollector(BaseCollector):
     def fetch_analyst(self, symbol: str):
         from ..models import AnalystEstimate
 
-        data = self._get(f"v3/analyst-estimates/{self._sym(symbol)}", limit=10)
+        data = self._get("analyst-estimates", symbol=self._sym(symbol), period="annual", limit=10)
         out: list = []
         for r in (data if isinstance(data, list) else []):
             year = _year_of(r.get("date"))
             if year is None:
                 continue
-            for metric, key in (("revenue", "estimatedRevenue"), ("eps", "estimatedEps"),
-                                ("ebitda", "estimatedEbitda")):
+            for metric, key in (("revenue", "revenue"), ("eps", "eps"), ("ebitda", "ebitda")):
                 out.append(AnalystEstimate(
                     symbol=symbol, market=self._current_market, fiscal_year=year, metric=metric,
-                    avg_est=r.get(f"{key}Avg") or r.get(key),
+                    avg_est=r.get(f"{key}Avg"),
                     high_est=r.get(f"{key}High"), low_est=r.get(f"{key}Low"),
-                    num_analysts=_int(r.get("numberAnalystEstimatedRevenue")), source="fmp"))
+                    num_analysts=_int(r.get("numAnalystsRevenue") or r.get("numAnalystsEps")),
+                    source="fmp"))
         return out
 
     def fetch_news(self, symbol: str):
         from ..models import NewsItem
 
-        data = self._get("v3/stock_news", tickers=self._sym(symbol), limit=50)
+        data = self._get("news/stock", symbols=self._sym(symbol), limit=50)
         out: list = []
         for r in (data if isinstance(data, list) else []):
             out.append(NewsItem(symbol=symbol, market=self._current_market,
@@ -278,7 +305,7 @@ class FmpCollector(BaseCollector):
     def fetch_esg(self, symbol: str):
         from ..models import EsgScore
 
-        data = self._get("v4/esg-environmental-social-governance-data", symbol=self._sym(symbol))
+        data = self._get("esg-disclosures", symbol=self._sym(symbol))
         out: list = []
         for r in (data if isinstance(data, list) else []):
             out.append(EsgScore(symbol=symbol, market=self._current_market,
@@ -290,7 +317,7 @@ class FmpCollector(BaseCollector):
     def fetch_institutional(self, symbol: str):
         from ..models import InstitutionalHolding
 
-        data = self._get("v3/institutional-holder/" + self._sym(symbol))
+        data = self._get("institutional-ownership/symbol-positions-summary", symbol=self._sym(symbol))
         out: list = []
         for r in (data if isinstance(data, list) else []):
             out.append(InstitutionalHolding(
@@ -303,7 +330,7 @@ class FmpCollector(BaseCollector):
         from ..models import EarningsEvent
 
         # Historical + upcoming earnings calendar for the ticker.
-        data = self._get(f"v3/historical/earning_calendar/{self._sym(symbol)}", limit=80)
+        data = self._get("earnings", symbol=self._sym(symbol), limit=80)
         out: list = []
         for r in (data if isinstance(data, list) else []):
             date = to_iso(r.get("date"))
@@ -312,7 +339,8 @@ class FmpCollector(BaseCollector):
             out.append(EarningsEvent(
                 symbol=symbol, market=self._current_market, event_date=date,
                 event_type="earnings", fiscal_period=None,
-                eps_estimate=r.get("epsEstimated"), eps_actual=r.get("eps"),
+                eps_estimate=r.get("epsEstimated"),
+                eps_actual=r.get("epsActual") if "epsActual" in r else r.get("eps"),
                 source="fmp"))
         return out
 
@@ -324,10 +352,10 @@ class FmpCollector(BaseCollector):
             raise NotSupportedError("FMP index membership is US-only")
         target = self._sym(symbol).upper()
         out: list = []
-        for index_name, endpoint in (("S&P500", "sp500_constituent"),
-                                     ("NASDAQ100", "nasdaq_constituent"),
-                                     ("DOWJONES", "dowjones_constituent")):
-            data = self._get(f"v3/{endpoint}")
+        for index_name, endpoint in (("S&P500", "sp500-constituent"),
+                                     ("NASDAQ100", "nasdaq-constituent"),
+                                     ("DOWJONES", "dowjones-constituent")):
+            data = self._get(endpoint)
             for r in (data if isinstance(data, list) else []):
                 if str(r.get("symbol", "")).upper() == target:
                     out.append(IndexMembership(
@@ -343,8 +371,9 @@ class FmpCollector(BaseCollector):
         out: list[FxRate] = []
         for base, quote in pairs:
             pair = f"{base}{quote}"
-            data = self._get(f"v3/historical-price-full/{pair}", **{"from": start, "to": end})
-            hist = data.get("historical") if isinstance(data, dict) else None
+            data = self._get("historical-price-eod/full", symbol=pair,
+                             **{"from": start, "to": end})
+            hist = _rows(data)
             if not hist:
                 continue
             for row in hist:
@@ -355,6 +384,19 @@ class FmpCollector(BaseCollector):
                            rate=float(row["close"]), source="fmp")
                 )
         return out
+
+
+def _rows(data) -> list:
+    """Normalize an FMP price/actions payload to a list of row dicts.
+
+    The stable API returns a flat list; the retired v3 API wrapped rows in
+    {"historical": [...]}. Accept both, and treat None (plan-limited) as empty.
+    """
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        return data.get("historical") or []
+    return []
 
 
 def _period(p) -> str:

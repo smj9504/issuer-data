@@ -75,7 +75,11 @@ class KrxCollector(BaseCollector):
     # --------------------------------------------------------------- prices
     def fetch_prices(self, symbol: str, start: str, end: str) -> list[Price]:
         start, end = default_range(start, end)
-        df = self.stock.get_market_ohlcv(compact(start), compact(end), symbol)
+        # adjusted=False (raw OHLC). pykrx's default adjusted=True path hits KRX's
+        # 수정주가 endpoint (adjStkPrc=2), which returns an empty frame in pykrx
+        # 1.2.8 — the collector silently got 0 rows. We store unadjusted OHLC and
+        # leave adj_close=None, so the raw series is both correct and reliable.
+        df = self.stock.get_market_ohlcv(compact(start), compact(end), symbol, adjusted=False)
         if df is None or df.empty:
             return []
         df = df.rename(columns=_COLMAP)
