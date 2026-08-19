@@ -14,6 +14,9 @@ cleanly rather than aborting the run.
 
 from __future__ import annotations
 
+import re
+from datetime import date, timedelta
+
 import requests
 
 from ..config import Settings
@@ -26,6 +29,11 @@ from .base import BaseCollector, NotSupportedError
 log = get_logger(__name__)
 
 _BASE = "https://financialmodelingprep.com/stable"
+_ACCESSION_RE = re.compile(r"\d{10}-\d{2}-\d{6}")
+# Free-tier statement/ratio endpoints 402 above this, whatever the requested limit.
+_FREE_TIER_LIMIT = 5
+# Free-tier sec-filings-search 402s once `from` goes back further than this.
+_FREE_TIER_LOOKBACK_DAYS = 300
 
 # HTTP statuses FMP uses for "not on your plan" / bad request — skip, don't abort.
 _PLAN_LIMITED = {400, 401, 402, 403}
@@ -120,8 +128,9 @@ class FmpCollector(BaseCollector):
     # --------------------------------------------------------------- prices
     def fetch_prices(self, symbol: str, start: str, end: str) -> list[Price]:
         start, end = default_range(start, end)
-        data = self._get("historical-price-eod/full", symbol=self._sym(symbol),
-                         **{"from": start, "to": end})
+        data = self._get(
+            "historical-price-eod/full", symbol=self._sym(symbol), **{"from": start, "to": end}
+        )
         hist = _rows(data)
         if not hist:
             return []
@@ -150,8 +159,12 @@ class FmpCollector(BaseCollector):
         out: list[FinancialFact] = []
         for endpoint, sttype in _STATEMENTS:
             for period_kind in ("annual", "quarter"):
-                data = self._get(endpoint, symbol=self._sym(symbol), period=period_kind,
-                                 limit=limit if period_kind == "annual" else limit * 4)
+                data = self._get(
+                    endpoint,
+                    symbol=self._sym(symbol),
+                    period=period_kind,
+                    limit=min(limit if period_kind == "annual" else limit * 4, _FREE_TIER_LIMIT),
+                )
                 if not isinstance(data, list):
                     continue
                 for rec in data:
@@ -183,24 +196,30 @@ class FmpCollector(BaseCollector):
     # --------------------------------------------------------------- filings
     def fetch_filings(self, symbol: str, start: str, end: str) -> list[Filing]:
         start, end = default_range(start, end, default_years=2)
-        data = self._get("sec-filings-search/symbol", symbol=self._sym(symbol),
-                         limit=100, **{"from": start, "to": end})
+        # Free-tier sec-filings-search rejects a `from` older than ~11 months back.
+        earliest = (date.today() - timedelta(days=_FREE_TIER_LOOKBACK_DAYS)).isoformat()
+        start = max(start, earliest)
+        data = self._get(
+            "sec-filings-search/symbol", symbol=self._sym(symbol), **{"from": start, "to": end}, limit=10
+        )
         if not isinstance(data, list):
             return []
         out: list[Filing] = []
         for rec in data:
-            filed = to_iso(rec.get("fillingDate") or rec.get("filingDate") or rec.get("acceptedDate"))
+            filed = to_iso(rec.get("filingDate") or rec.get("acceptedDate"))
             if filed and not (start <= filed <= end):
                 continue
             link = rec.get("finalLink") or rec.get("link")
+            accession = _ACCESSION_RE.search(link or "")
+            form_type = rec.get("formType")
             out.append(
                 Filing(
                     symbol=symbol,
                     market=self._current_market,
-                    filing_id=str(rec.get("accessionNumber") or rec.get("fillingDate") or link),
+                    filing_id=accession.group(0) if accession else str(filed or link),
                     filed_date=filed,
-                    filing_type=rec.get("type") or rec.get("form"),
-                    title=rec.get("type") or rec.get("form"),
+                    filing_type=form_type,
+                    title=form_type,
                     url=link,
                     source="fmp",
                     doc_urls=[link] if link else [],
@@ -223,13 +242,17 @@ class FmpCollector(BaseCollector):
         from ..models import DailyMetric
 
         start, end = default_range(start, end)
-        data = self._get("historical-market-capitalization", symbol=self._sym(symbol),
-                         limit=500, **{"from": start, "to": end})
+        # Free-tier historical-market-capitalization rejects any from/to filter;
+        # pull the latest window and filter client-side instead.
+        data = self._get("historical-market-capitalization", symbol=self._sym(symbol), limit=500)
         out: list = []
         if isinstance(data, list):
             for r in data:
+                metric_date = to_iso(r.get("date"))
+                if metric_date and not (start <= metric_date <= end):
+                    continue
                 out.append(DailyMetric(
-                    symbol=symbol, market=self._current_market, metric_date=to_iso(r.get("date")),
+                    symbol=symbol, market=self._current_market, metric_date=metric_date,
                     market_cap=r.get("marketCap"), currency=_ccy(self._current_market), source="fmp"))
         return out
 
@@ -238,7 +261,10 @@ class FmpCollector(BaseCollector):
 
         out: list = []
         for endpoint in ("ratios", "key-metrics"):
-            data = self._get(endpoint, symbol=self._sym(symbol), period="annual", limit=years or 5)
+            data = self._get(
+                endpoint, symbol=self._sym(symbol), period="annual",
+                limit=min(years or 5, _FREE_TIER_LIMIT),
+            )
             if not isinstance(data, list):
                 continue
             for rec in data:
@@ -259,13 +285,13 @@ class FmpCollector(BaseCollector):
         from ..models import CorporateAction
 
         out: list = []
-        div = self._get("dividends", symbol=self._sym(symbol))
+        div = self._get("dividends", symbol=self._sym(symbol), limit=_FREE_TIER_LIMIT)
         for r in _rows(div):
             out.append(CorporateAction(symbol=symbol, market=self._current_market,
                                        ex_date=to_iso(r.get("date")), action_type="dividend",
                                        amount=r.get("dividend") or r.get("adjDividend"),
                                        currency=_ccy(self._current_market), source="fmp"))
-        spl = self._get("splits", symbol=self._sym(symbol))
+        spl = self._get("splits", symbol=self._sym(symbol), limit=_FREE_TIER_LIMIT)
         for r in _rows(spl):
             num, den = r.get("numerator"), r.get("denominator")
             out.append(CorporateAction(symbol=symbol, market=self._current_market,
@@ -282,18 +308,22 @@ class FmpCollector(BaseCollector):
             year = _year_of(r.get("date"))
             if year is None:
                 continue
-            for metric, key in (("revenue", "revenue"), ("eps", "eps"), ("ebitda", "ebitda")):
+            for metric, key, num_key in (
+                ("revenue", "revenue", "numAnalystsRevenue"),
+                ("eps", "eps", "numAnalystsEps"),
+                ("ebitda", "ebitda", None),
+            ):
                 out.append(AnalystEstimate(
                     symbol=symbol, market=self._current_market, fiscal_year=year, metric=metric,
                     avg_est=r.get(f"{key}Avg"),
                     high_est=r.get(f"{key}High"), low_est=r.get(f"{key}Low"),
-                    num_analysts=_int(r.get("numAnalystsRevenue") or r.get("numAnalystsEps")),
-                    source="fmp"))
+                    num_analysts=_int(r.get(num_key)) if num_key else None, source="fmp"))
         return out
 
     def fetch_news(self, symbol: str):
         from ..models import NewsItem
 
+        # /stable/news/stock requires a paid plan; skip cleanly if restricted.
         data = self._get("news/stock", symbols=self._sym(symbol), limit=50)
         out: list = []
         for r in (data if isinstance(data, list) else []):
@@ -305,6 +335,7 @@ class FmpCollector(BaseCollector):
     def fetch_esg(self, symbol: str):
         from ..models import EsgScore
 
+        # /stable/esg-disclosures requires a paid plan; skip cleanly if restricted.
         data = self._get("esg-disclosures", symbol=self._sym(symbol))
         out: list = []
         for r in (data if isinstance(data, list) else []):
@@ -317,6 +348,9 @@ class FmpCollector(BaseCollector):
     def fetch_institutional(self, symbol: str):
         from ..models import InstitutionalHolding
 
+        # institutional-ownership/symbol-ownership 404s on the free plan for every
+        # symbol/quarter (paid-plan gate); symbol-positions-summary is the endpoint
+        # that actually resolves.
         data = self._get("institutional-ownership/symbol-positions-summary", symbol=self._sym(symbol))
         out: list = []
         for r in (data if isinstance(data, list) else []):
@@ -371,8 +405,7 @@ class FmpCollector(BaseCollector):
         out: list[FxRate] = []
         for base, quote in pairs:
             pair = f"{base}{quote}"
-            data = self._get("historical-price-eod/full", symbol=pair,
-                             **{"from": start, "to": end})
+            data = self._get("historical-price-eod/full", symbol=pair, **{"from": start, "to": end})
             hist = _rows(data)
             if not hist:
                 continue

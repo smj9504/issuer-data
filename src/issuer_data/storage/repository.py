@@ -13,8 +13,14 @@ from ..models import (
     FilingDocument,
     FinancialFact,
     FxRate,
+    LawApiRawItem,
     Price,
     Security,
+    StatuteComparisonEntry,
+    StatuteDetail,
+    StatuteHistoryEntry,
+    StatuteRecord,
+    StatuteTranslation,
 )
 from ..utils.dates import today_iso
 
@@ -310,6 +316,136 @@ class Repository:
             "VALUES (?,?,?,?)",
             (company_id, peer_company_id, relation, source),
         )
+
+    # -------------------------------------------------------------- statutes
+    # National reference data (국가법령정보 OpenAPI) — keyed by (law_id, source),
+    # not tied to a symbol. `company_id` is an optional caller-supplied link.
+    def upsert_statutes(
+        self, records: Iterable[StatuteRecord], company_id: int | None = None
+    ) -> int:
+        n = 0
+        for r in records:
+            self._exec(
+                "INSERT INTO statutes(law_id, law_serial_no, name, name_abbrev, law_type, "
+                "department, promulgation_date, promulgation_no, enforcement_date, "
+                "revision_type, detail_url, company_id, source, updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(law_id, source) DO UPDATE SET "
+                "law_serial_no=excluded.law_serial_no, name=excluded.name, "
+                "name_abbrev=excluded.name_abbrev, law_type=excluded.law_type, "
+                "department=excluded.department, promulgation_date=excluded.promulgation_date, "
+                "promulgation_no=excluded.promulgation_no, "
+                "enforcement_date=excluded.enforcement_date, "
+                "revision_type=excluded.revision_type, detail_url=excluded.detail_url, "
+                "company_id=COALESCE(excluded.company_id, statutes.company_id), "
+                "updated_at=excluded.updated_at",
+                (r.law_id, r.law_serial_no, r.name, r.name_abbrev, r.law_type, r.department,
+                 r.promulgation_date, r.promulgation_no, r.enforcement_date, r.revision_type,
+                 r.detail_url, company_id, r.source, today_iso()),
+            )
+            n += 1
+        return n
+
+    def upsert_statute_detail(self, detail: StatuteDetail, company_id: int | None = None) -> None:
+        """Merge a body-fetch result into `statutes` (insert the row if it doesn't exist yet)."""
+        articles_json = json.dumps(
+            [a.model_dump() for a in detail.articles], ensure_ascii=False
+        ) if detail.articles else None
+        self._exec(
+            "INSERT INTO statutes(law_id, law_serial_no, name, department, "
+            "promulgation_date, enforcement_date, articles_json, raw_text, company_id, "
+            "source, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(law_id, source) DO UPDATE SET "
+            "law_serial_no=excluded.law_serial_no, name=excluded.name, "
+            "department=COALESCE(excluded.department, statutes.department), "
+            "promulgation_date=COALESCE(excluded.promulgation_date, statutes.promulgation_date), "
+            "enforcement_date=COALESCE(excluded.enforcement_date, statutes.enforcement_date), "
+            "articles_json=excluded.articles_json, raw_text=excluded.raw_text, "
+            "company_id=COALESCE(excluded.company_id, statutes.company_id), "
+            "updated_at=excluded.updated_at",
+            (detail.law_id, detail.law_serial_no, detail.name, detail.department,
+             detail.promulgation_date, detail.enforcement_date, articles_json, detail.raw_text,
+             company_id, detail.source, today_iso()),
+        )
+
+    def upsert_statute_history(
+        self, entries: Iterable[StatuteHistoryEntry], company_id: int | None = None
+    ) -> int:
+        n = 0
+        for h in entries:
+            self._exec(
+                "INSERT INTO statute_history(law_id, law_serial_no, name, enforcement_date, "
+                "promulgation_date, revision_type, status, company_id, source) "
+                "VALUES (?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(law_id, law_serial_no, source) DO UPDATE SET "
+                "name=excluded.name, enforcement_date=excluded.enforcement_date, "
+                "promulgation_date=excluded.promulgation_date, "
+                "revision_type=excluded.revision_type, status=excluded.status, "
+                "company_id=COALESCE(excluded.company_id, statute_history.company_id)",
+                (h.law_id, h.law_serial_no, h.name, h.enforcement_date, h.promulgation_date,
+                 h.revision_type, h.status, company_id, h.source),
+            )
+            n += 1
+        return n
+
+    def upsert_statute_translations(
+        self, entries: Iterable[StatuteTranslation], company_id: int | None = None
+    ) -> int:
+        n = 0
+        for t in entries:
+            self._exec(
+                "INSERT INTO statute_translations(law_id, law_serial_no, name_en, content_en, "
+                "company_id, source) VALUES (?,?,?,?,?,?) "
+                "ON CONFLICT(law_id, source) DO UPDATE SET "
+                "law_serial_no=excluded.law_serial_no, name_en=excluded.name_en, "
+                "content_en=excluded.content_en, "
+                "company_id=COALESCE(excluded.company_id, statute_translations.company_id)",
+                (t.law_id, t.law_serial_no, t.name_en, t.content_en, company_id, t.source),
+            )
+            n += 1
+        return n
+
+    def upsert_statute_comparisons(
+        self, entries: Iterable[StatuteComparisonEntry], company_id: int | None = None
+    ) -> int:
+        n = 0
+        for c in entries:
+            self._exec(
+                "INSERT INTO statute_comparisons(law_id, article_no, old_text, new_text, "
+                "company_id, source) VALUES (?,?,?,?,?,?) "
+                "ON CONFLICT(law_id, article_no, source) DO UPDATE SET "
+                "old_text=excluded.old_text, new_text=excluded.new_text, "
+                "company_id=COALESCE(excluded.company_id, statute_comparisons.company_id)",
+                (c.law_id, c.article_no, c.old_text, c.new_text, company_id, c.source),
+            )
+            n += 1
+        return n
+
+    def link_statute_to_company(self, law_id: str, source: str, company_id: int) -> None:
+        """Attach (or reassign) the optional issuer link on an already-stored statute."""
+        self._exec(
+            "UPDATE statutes SET company_id=? WHERE law_id=? AND source=?",
+            (company_id, law_id, source),
+        )
+
+    def upsert_law_api_raw(
+        self, items: Iterable[LawApiRawItem], company_id: int | None = None
+    ) -> int:
+        """Catch-all for statute-API categories without a dedicated table (see kr_law.py)."""
+        n = 0
+        for it in items:
+            self._exec(
+                "INSERT INTO law_api_raw(target, item_key, title, payload_json, company_id, "
+                "source, fetched_at) VALUES (?,?,?,?,?,?,?) "
+                "ON CONFLICT(target, item_key, source) DO UPDATE SET "
+                "title=excluded.title, payload_json=excluded.payload_json, "
+                "company_id=COALESCE(excluded.company_id, law_api_raw.company_id), "
+                "fetched_at=excluded.fetched_at",
+                (it.target, it.item_key, it.title, it.payload_json, company_id, it.source,
+                 today_iso()),
+            )
+            n += 1
+        return n
 
     # ------------------------------------------------------- coverage (generic)
     # grain -> (fk column, resolver method name)

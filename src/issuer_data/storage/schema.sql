@@ -321,6 +321,34 @@ CREATE TABLE IF NOT EXISTS news (
     PRIMARY KEY (company_id, published_at, title, source)
 );
 
+-- Demand/oversubscription signals for an offering (US has no order-book
+-- disclosure requirement, so this is best-effort from free official sources:
+-- Nasdaq's IPO calendar deal-size changes, SEC EDGAR full-text search hits
+-- ('oversubscribed' / 'testing-the-waters'), IPO price-band escalation,
+-- anchor-investor "indication of interest" disclosures, and the length of
+-- the confidential DRS review period) --
+CREATE TABLE IF NOT EXISTS demand_signals (
+    company_id      INTEGER NOT NULL REFERENCES companies(company_id) ON DELETE CASCADE,
+    signal_date     TEXT NOT NULL,
+    -- 'nasdaq_calendar' | 'sec_fulltext' | 'price_band' | 'anchor_investor'
+    -- | 'ttw_fulltext' | 'confidential_review'
+    signal_type     TEXT NOT NULL,
+    filed_amount    REAL,                 -- as-proposed deal size (USD)
+    priced_amount   REAL,                 -- final confirmed deal size (USD)
+    price           REAL,
+    shares          REAL,
+    -- anchor-investor name (best-effort text extraction); '' for every other
+    -- signal_type. Part of the primary key, so it must stay NOT NULL — a
+    -- nullable column here would break dedup for all other signal types
+    -- (SQL treats NULL <> NULL, so two NULL rows never collide).
+    investor_name   TEXT NOT NULL DEFAULT '',
+    indicated_amount REAL,                -- anchor investor's indicated $ (USD)
+    detail          TEXT,                 -- quoted snippet / summary
+    url             TEXT,
+    source          TEXT NOT NULL,
+    PRIMARY KEY (company_id, signal_date, signal_type, source, investor_name)
+);
+
 -- Index membership history (FMP US indices) -----------------------------------
 CREATE TABLE IF NOT EXISTS index_membership (
     company_id INTEGER NOT NULL REFERENCES companies(company_id) ON DELETE CASCADE,
@@ -338,6 +366,79 @@ CREATE TABLE IF NOT EXISTS esg_scores (
     env REAL, soc REAL, gov REAL, total REAL,
     source     TEXT NOT NULL,
     PRIMARY KEY (company_id, period, source)
+);
+
+-- ============================================================================
+-- Korean statutes (국가법령정보 공동활용 OpenAPI, open.law.go.kr)
+-- National reference data, not market/symbol-scoped. company_id is an optional
+-- link a caller may attach (e.g. "이 법령은 이 발행사와 관련 있음") — nullable.
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS statutes (
+    law_id            TEXT NOT NULL,        -- 법령ID
+    law_serial_no     TEXT NOT NULL,        -- 법령일련번호 (MST)
+    name              TEXT NOT NULL,        -- 법령명한글
+    name_abbrev       TEXT,
+    law_type          TEXT,                 -- 법률/시행령/시행규칙/...
+    department        TEXT,                 -- 소관부처명
+    promulgation_date TEXT,
+    promulgation_no    TEXT,
+    enforcement_date  TEXT,
+    revision_type     TEXT,                 -- 제개정구분명
+    detail_url        TEXT,
+    articles_json     TEXT,                 -- JSON list of {article_no,title,content}; body fetch only
+    raw_text          TEXT,                 -- raw API payload fallback (body fetch only)
+    company_id        INTEGER REFERENCES companies(company_id) ON DELETE SET NULL,
+    source            TEXT NOT NULL,
+    updated_at        TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (law_id, source)
+);
+CREATE INDEX IF NOT EXISTS idx_statutes_company ON statutes(company_id);
+
+CREATE TABLE IF NOT EXISTS statute_history (
+    law_id            TEXT NOT NULL,
+    law_serial_no     TEXT NOT NULL,        -- MST of this specific revision
+    name              TEXT NOT NULL,
+    enforcement_date  TEXT,
+    promulgation_date TEXT,
+    revision_type     TEXT,
+    status            TEXT,                 -- 현행연혁코드: '현행'|'연혁'|'시행예정'
+    company_id        INTEGER REFERENCES companies(company_id) ON DELETE SET NULL,
+    source            TEXT NOT NULL,
+    PRIMARY KEY (law_id, law_serial_no, source)
+);
+
+CREATE TABLE IF NOT EXISTS statute_translations (
+    law_id        TEXT NOT NULL,
+    law_serial_no TEXT,
+    name_en       TEXT NOT NULL,
+    content_en    TEXT,
+    company_id    INTEGER REFERENCES companies(company_id) ON DELETE SET NULL,
+    source        TEXT NOT NULL,
+    PRIMARY KEY (law_id, source)
+);
+
+CREATE TABLE IF NOT EXISTS statute_comparisons (
+    law_id     TEXT NOT NULL,
+    article_no TEXT NOT NULL,
+    old_text   TEXT,
+    new_text   TEXT,
+    company_id INTEGER REFERENCES companies(company_id) ON DELETE SET NULL,
+    source     TEXT NOT NULL,
+    PRIMARY KEY (law_id, article_no, source)
+);
+
+-- Catch-all for every other 국가법령정보 OpenAPI category (행정규칙/자치법규/판례/
+-- 법령해석례/헌재결정례/조약/별표서식/법령체계도/법령명약칭/...) — raw JSON per item,
+-- since those targets aren't individually modeled (see LawApiRawItem).
+CREATE TABLE IF NOT EXISTS law_api_raw (
+    target       TEXT NOT NULL,       -- API target code, e.g. 'admrul','prec','ordin'
+    item_key     TEXT NOT NULL,       -- best-effort id within target; content hash fallback
+    title        TEXT,
+    payload_json TEXT NOT NULL,
+    company_id   INTEGER REFERENCES companies(company_id) ON DELETE SET NULL,
+    source       TEXT NOT NULL,
+    fetched_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (target, item_key, source)
 );
 
 -- Accounting-correct USD-converted financials --------------------------------

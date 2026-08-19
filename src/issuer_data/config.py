@@ -36,6 +36,10 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("KRX_PW", "ISSUER_KRX_PW"),
     )
 
+    # 국가법령정보 공동활용 OpenAPI (open.law.go.kr) — OC is the email-id issued on
+    # signup (e.g. "abcd" for abcd@korea.kr), not a traditional API key.
+    law_api_oc: str | None = None
+
     # SEC EDGAR requires a descriptive UA with contact info or it returns 403.
     sec_user_agent: str = "issuer-data research your-email@example.com"
 
@@ -83,6 +87,7 @@ class Settings(BaseSettings):
     fmp_rate_limit: float = 4.0          # req/sec
     alphavantage_rate_limit: float = 0.08  # ~5/min free tier -> ~1 per 12.5s
     default_rate_limit: float = 2.0      # req/sec for generic sources
+    law_rate_limit: float = 1.0          # req/sec — no published cap; stay polite
 
 
 _settings: Settings | None = None

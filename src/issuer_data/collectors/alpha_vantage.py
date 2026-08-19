@@ -142,6 +142,38 @@ class AlphaVantageCollector(BaseCollector):
                         )
         return out
 
+    # -------------------------------------------------------------- news
+    def fetch_news(self, symbol: str):
+        from ..models import NewsItem
+
+        d = self._get("NEWS_SENTIMENT", tickers=symbol, limit=50)
+        out: list[NewsItem] = []
+        for item in d.get("feed", []) or []:
+            score = item.get("overall_sentiment_score")
+            for ts in item.get("ticker_sentiment", []) or []:
+                if ts.get("ticker") == symbol:
+                    score = ts.get("ticker_sentiment_score")
+                    break
+            out.append(
+                NewsItem(
+                    symbol=symbol,
+                    market=self._current_market,
+                    published_at=_ts(item.get("time_published")) or "",
+                    title=item.get("title") or "",
+                    url=item.get("url"),
+                    sentiment=_f(score),
+                    source="alphavantage",
+                )
+            )
+        return out
+
+
+def _ts(v: str | None) -> str | None:
+    """Alpha Vantage timestamps look like '20260809T105936' -> ISO 8601."""
+    if not v or len(v) < 15:
+        return None
+    return f"{v[0:4]}-{v[4:6]}-{v[6:8]}T{v[9:11]}:{v[11:13]}:{v[13:15]}"
+
 
 def _quarter_of(end_date: str) -> str:
     """Map a fiscalDateEnding 'YYYY-MM-DD' to Q1..Q4 by its month (fallback 'Q')."""

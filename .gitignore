@@ -6,10 +6,18 @@ data/*.sqlite
 data/*.sqlite-journal
 data/*.sqlite-wal
 data/*.sqlite-shm
+data/*.sqlite.bak
 data/documents/
 data/company_overrides.csv
 # OpenDartReader writes its daily corp_code pickle here, relative to CWD
 docs_cache/
+
+# Third-party accidental cache (OpenDartReader's own corp-code/page cache dir)
+docs_cache/
+
+# One-off research: raw downloads/scratch are disposable; run.py/README.md/
+# output/ are tracked on purpose (see research/README.md)
+research/*/.cache/
 
 # Python
 __pycache__/
