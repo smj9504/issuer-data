@@ -65,6 +65,17 @@ class Settings(BaseSettings):
     pdf_ml_engine: str = "table-transformer"   # or "docling"
     pdf_ml_dpi: int = 150
 
+    # --- extraction validation (reference-free; see pdf_validate) -------------
+    # Thresholds are a starting point, not a measurement: calibrate them against
+    # a labelled sample with `python -m issuer_data eval` before trusting them.
+    pdf_validate_enabled: bool = True
+    pdf_coverage_min: float = 0.98        # below → review
+    pdf_coverage_fail: float = 0.85       # below → fail: content was lost
+    pdf_agreement_enabled: bool = False   # costs a second full parse
+    pdf_agreement_min: float = 0.90
+    pdf_crosscheck_enabled: bool = True   # a local DB query, effectively free
+    pdf_field_schema: str | None = None   # JSON schema of required fields
+
     # --- OCR (scanned PDFs) -------------------------------------------------
     # On by default: an image-only PDF is a document we would otherwise store with
     # no text at all, so a page with no text layer is rendered and OCR'd. The

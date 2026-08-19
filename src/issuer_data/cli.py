@@ -229,6 +229,134 @@ def cmd_query(args) -> int:
     return 0
 
 
+def cmd_validate(args) -> int:
+    """Parse one PDF and print why it should (or should not) be trusted."""
+    import json as _json
+    from pathlib import Path
+
+    from .documents import validation_thresholds
+    from .pdf_extract import extract_structured
+
+    settings = get_settings()
+    content = Path(args.file).read_bytes()
+    specs = None
+    if args.fields:
+        from .pdf_fields import load_specs
+
+        specs = load_specs(args.fields)
+    elif args.default_fields:
+        from .pdf_fields import DEFAULT_SPECS
+
+        specs = DEFAULT_SPECS
+    if getattr(args, "ml_engine", None):
+        settings.pdf_ml_engine = args.ml_engine
+        settings.pdf_ml_tables = True
+
+    doc = extract_structured(
+        content, threshold=settings.pdf_confidence_threshold,
+        ml_engine=(settings.pdf_ml_engine if settings.pdf_ml_tables else None),
+        ml_dpi=settings.pdf_ml_dpi, field_specs=specs,
+        thresholds=validation_thresholds(settings),
+    )
+    report = doc.validation
+    if args.agreement:
+        from .pdf_agreement import agreement as run_agreement
+        from .pdf_validate import decide
+
+        consensus = run_agreement(content, reference=doc.tables,
+                                  flag_below=settings.pdf_agreement_min)
+        report.agreement = consensus.score
+        report.tables_flagged = sum(1 for t in doc.tables if t.needs_review)
+        decide(report, validation_thresholds(settings))
+    if args.crosscheck_symbol:
+        report.crosscheck = _crosscheck_for(settings, args.crosscheck_symbol, doc.tables)
+        from .pdf_validate import decide
+
+        decide(report, validation_thresholds(settings))
+
+    if args.json:
+        print(_json.dumps(report.to_dict(), ensure_ascii=False, indent=2))
+        return 0 if report.verdict != "fail" else 1
+
+    cov = report.coverage
+    print(f"verdict     : {report.verdict.upper()}")
+    print(f"pages       : {doc.page_count}   tables: {report.tables_total} "
+          f"({report.tables_flagged} flagged)")
+    if cov:
+        print(f"coverage    : text {_pct(cov.token_recall)}  "
+              f"numbers {_pct(cov.numeric_recall)} "
+              f"({cov.source_tokens} tokens, {cov.source_numbers} numbers in source)")
+    arith = report.arithmetic
+    if arith.checks:
+        print(f"arithmetic  : {arith.passed}/{arith.checks} total rows add up")
+    else:
+        print("arithmetic  : no total rows found — nothing to self-check")
+    if report.agreement is not None:
+        print(f"agreement   : {report.agreement:.1%} with an independent detector")
+    if report.crosscheck:
+        cc = report.crosscheck
+        print(f"cross-source: {cc['confirmed']} confirmed, {len(cc['conflicts'])} conflicting, "
+              f"{cc['unmatched']} not in this document")
+    if report.fields:
+        print("fields      :")
+        for name, value in report.fields.items():
+            page = f"p.{value.page}" if value.page else "?"
+            print(f"  {name:14} {value.value[:50]:52} [{page}, {value.source}]")
+    if report.missing_fields:
+        print(f"missing     : {', '.join(report.missing_fields)}")
+    if report.reasons:
+        print("reasons     :")
+        for reason in report.reasons:
+            print(f"  - {reason}")
+    for failure in arith.failures[:5]:
+        print(f"  ! {failure}")
+    for line in (cov.lost_lines[:5] if cov else []):
+        print(f"  ! line missing from the output: {line[:80]}")
+    return 0 if report.verdict != "fail" else 1
+
+
+def _crosscheck_for(settings, symbol: str, tables) -> dict | None:
+    """Cross-check a document's figures against what other sources reported."""
+    from .crosscheck import crosscheck
+    from .storage.repository import Repository
+
+    market, sym = (symbol.split(":", 1) if ":" in symbol else ("KR", symbol))
+    conn = connect(settings.db_path)
+    try:
+        repo = Repository(conn)
+        company_id = repo.get_company_id_for_symbol(market.upper(), sym)
+        if company_id is None:
+            print(f"(no company stored for {market}:{sym} — skipping the cross-source check)")
+            return None
+        return crosscheck(conn, company_id, tables).to_dict()
+    finally:
+        conn.close()
+
+
+def cmd_review_queue(args) -> int:
+    """List the documents whose extraction wants a human, worst first."""
+    from .storage.repository import Repository
+
+    settings = get_settings()
+    conn = connect(settings.db_path)
+    try:
+        rows = Repository(conn).extraction_review_queue(limit=args.limit,
+                                                        verdict=args.verdict)
+        if not rows:
+            print("Nothing awaiting review.")
+            return 0
+        print(f"{'verdict':8} {'source':10} {'filing':24} {'seq':>3} {'text':>6} reasons")
+        for row in rows:
+            recall = "" if row["token_recall"] is None else f"{row['token_recall']:.1%}"
+            reasons = (row["reasons"] or "").replace("\n", "; ")
+            print(f"{row['verdict']:8} {row['source']:10} {row['filing_id'][:24]:24} "
+                  f"{row['doc_seq']:>3} {recall:>6} {reasons[:70]}")
+        print(f"\n{len(rows)} document(s) awaiting review.")
+    finally:
+        conn.close()
+    return 0
+
+
 def cmd_eval(args) -> int:
     import json as _json
 
@@ -247,7 +375,8 @@ def cmd_eval(args) -> int:
         escalator = build_escalator(settings)
     report = run_eval(cases, escalator=escalator,
                       threshold=settings.pdf_confidence_threshold,
-                      cost_per_page=settings.escalation_cost_per_page)
+                      cost_per_page=settings.escalation_cost_per_page,
+                      agreement=args.agreement)
     if args.json:
         print(_json.dumps(report, ensure_ascii=False, indent=2))
         return 0
@@ -260,7 +389,24 @@ def cmd_eval(args) -> int:
           f"{_fmt(o['numeric_em']):>7} {_fmt(o['continuity']):>7}")
     print(f"\ncases: {report['n_cases']}  escalated: {report['escalated_total']}  "
           f"est. cost: ${report['est_cost_total']:.3f}")
+    verdicts = report.get("verdicts") or {}
+    print("verdicts: " + ", ".join(f"{k} {v}" for k, v in sorted(verdicts.items())))
+    gate = report.get("gate") or {}
+    if gate.get("n"):
+        # How well the no-label gate tracks the labelled truth. `missed` is the
+        # count that justifies auditing a random sample of PASS documents.
+        print(f"gate (TEDS >= {gate['accurate_at']}): caught {gate['caught']}, "
+              f"missed {gate['missed']}, false alarms {gate['false_alarms']}, "
+              f"review rate {gate['review_rate']:.0%}")
+        if gate["missed"]:
+            print(f"  ! {gate['missed']} case(s) passed the gate but scored badly — "
+                  f"the gate's blind spot")
     return 0
+
+
+def _pct(v) -> str:
+    """Percentages that may be unknown — 'nothing to measure' is not 100%."""
+    return "—" if v is None else f"{v:.1%}"
 
 
 def _fmt(v) -> str:
@@ -333,12 +479,33 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("--sql", required=True)
     q.set_defaults(func=cmd_query)
 
+    va = sub.add_parser("validate", help="check one PDF's extraction and explain the verdict")
+    va.add_argument("--file", required=True, help="path to the PDF")
+    va.add_argument("--fields", help="JSON field schema to require (see pdf_fields)")
+    va.add_argument("--default-fields", action="store_true",
+                    help="look for the built-in issuer/security fields")
+    va.add_argument("--agreement", action="store_true",
+                    help="re-parse with an independent detector and score the consensus")
+    va.add_argument("--crosscheck-symbol",
+                    help="compare figures against stored data for MARKET:SYMBOL")
+    va.add_argument("--ml-engine", choices=("table-transformer", "docling"))
+    va.add_argument("--json", action="store_true", help="emit the full report as JSON")
+    va.set_defaults(func=cmd_validate)
+
+    rq = sub.add_parser("review-queue", help="documents whose extraction needs a human")
+    rq.add_argument("--limit", type=int, default=50)
+    rq.add_argument("--verdict", choices=("pass", "review", "fail"),
+                    help="filter (default: everything that is not a pass)")
+    rq.set_defaults(func=cmd_review_queue)
+
     ev = sub.add_parser("eval", help="score PDF extraction accuracy on the gold set")
     ev.add_argument("--gold-dir", default="data/eval",
                     help="dir of real labelled cases <name>/{doc.pdf,expected.json}")
     ev.add_argument("--json", action="store_true", help="emit the full report as JSON")
     ev.add_argument("--escalate", action="store_true",
                     help="also run configured escalation and report lift/cost")
+    ev.add_argument("--agreement", action="store_true",
+                    help="also score independent-detector consensus per case")
     ev.set_defaults(func=cmd_eval)
 
     return p

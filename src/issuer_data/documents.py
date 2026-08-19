@@ -228,16 +228,77 @@ def _member_text(data: bytes, name: str, depth: int) -> str | None:
 
 
 # ------------------------------------------------------------------ downloading
+def validation_thresholds(settings: Settings):
+    """Build the validation thresholds from settings (see ``pdf_validate``)."""
+    from .pdf_validate import Thresholds
+
+    return Thresholds(
+        coverage_min=getattr(settings, "pdf_coverage_min", 0.98),
+        coverage_fail=getattr(settings, "pdf_coverage_fail", 0.85),
+        agreement_min=getattr(settings, "pdf_agreement_min", 0.90),
+    )
+
+
+def _field_specs(settings: Settings):
+    """The required-field schema, when one is configured. None means no schema —
+    the gate then rests on coverage/arithmetic alone rather than failing every
+    document for lacking fields nobody asked for."""
+    path = getattr(settings, "pdf_field_schema", None)
+    if not path:
+        return None
+    try:
+        from .pdf_fields import load_specs
+
+        return load_specs(path)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("could not load the field schema %s: %s", path, exc)
+        return None
+
+
+def _record_extraction(repo, settings: Settings, company_id: int, filing_id: str,
+                       source: str, doc_seq: int, tables, report) -> str | None:
+    """Cross-check against other sources, then persist the verdict.
+
+    Returns the final verdict so the caller can summarize a run. A document whose
+    parse failed leaves a row saying so: the whole point is that nothing fails
+    quietly.
+    """
+    if report is None:
+        return None
+    if tables and getattr(settings, "pdf_crosscheck_enabled", True):
+        try:
+            from .crosscheck import crosscheck
+            from .pdf_validate import decide
+
+            # Exclude the filing's own source: figures parsed from this filing
+            # cannot corroborate this filing.
+            cross = crosscheck(repo.conn, company_id, tables, exclude_sources=[source])
+            if cross.checks:
+                report.crosscheck = cross.to_dict()
+                decide(report, validation_thresholds(settings))
+        except Exception as exc:  # noqa: BLE001
+            log.debug("cross-source check skipped for %s/%s: %s", filing_id, source, exc)
+    try:
+        repo.upsert_extraction_report(company_id, filing_id, source, doc_seq, report)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("could not store the extraction report for %s/%s: %s",
+                    filing_id, source, exc)
+    if report.verdict != "pass":
+        log.warning("extraction %s for %s/%s doc %d: %s", report.verdict, source,
+                    filing_id, doc_seq, "; ".join(report.reasons))
+    return report.verdict
+
+
 def _download_one(
     client: HttpClient, settings: Settings, company_id: int, filing_id: str,
     source: str, doc_seq: int, url: str, market: str, symbol: str,
     extract_tables: bool = False,
-) -> tuple[FilingDocument | None, list]:
+) -> tuple[FilingDocument | None, list, object | None]:
     try:
         resp = client.get(url, headers=_headers_for(url, settings))
     except Exception as exc:  # noqa: BLE001
         log.warning("download failed %s: %s", url, exc)
-        return None, []
+        return None, [], None
     content = resp.content
     fmt = _format_from(url, resp.headers.get("Content-Type"), content)
     filename = _filename_from(url, doc_seq, fmt)
@@ -246,6 +307,7 @@ def _download_one(
     dest = dest_dir / filename
     dest.write_bytes(content)
     tables: list = []
+    report = None
     text: str | None = None
     if extract_tables and fmt == "pdf":
         # Structured pass: cross-page-stitched tables + reflowed narrative, with
@@ -261,12 +323,27 @@ def _download_one(
                 cost_per_page=settings.escalation_cost_per_page,
                 ml_engine=(settings.pdf_ml_engine if settings.pdf_ml_tables else None),
                 ml_dpi=settings.pdf_ml_dpi,
+                validate=getattr(settings, "pdf_validate_enabled", True),
+                field_specs=_field_specs(settings),
+                thresholds=validation_thresholds(settings),
             )
             tables = doc.tables
             text = doc.text or None
+            report = doc.validation
             if doc.escalated_count:
                 log.info("escalated %d low-confidence table(s) for %s (est. cost $%.3f)",
                          doc.escalated_count, url, doc.est_cost)
+            if report is not None and getattr(settings, "pdf_agreement_enabled", False):
+                # A second, independent detector on the same bytes. Expensive, so
+                # it is off by default and meant for sampling.
+                from .pdf_agreement import agreement as _agreement
+                from .pdf_validate import decide as _decide
+
+                consensus = _agreement(content, reference=tables,
+                                       flag_below=settings.pdf_agreement_min)
+                report.agreement = consensus.score
+                report.tables_flagged = sum(1 for t in tables if t.needs_review)
+                _decide(report, validation_thresholds(settings))
         except Exception as exc:  # noqa: BLE001
             log.warning("structured PDF extract failed %s: %s", url, exc)
     if text is None:
@@ -295,7 +372,7 @@ def _download_one(
         text_content=text,
         text_chars=len(text) if text else 0,
         downloaded_at=today_iso(),
-    ), tables
+    ), tables, report
 
 
 def _ocr_pages_without_text(content: bytes, text: str | None,
@@ -342,23 +419,30 @@ def download_filing_documents(
     market, symbol = (sym or ("NA", str(company_id)))
     n = 0
     empty = 0
+    verdicts: dict[str, int] = {}
     for fl in filings:
         urls = fl.doc_urls or ([fl.url] if fl.url else [])
         for seq, url in enumerate(urls):
             if not url:
                 continue
-            doc, tables = _download_one(client, settings, company_id, fl.filing_id, fl.source,
-                                        seq, url, market, symbol, extract_tables)
+            doc, tables, report = _download_one(
+                client, settings, company_id, fl.filing_id, fl.source,
+                seq, url, market, symbol, extract_tables)
             if doc is not None:
                 repo.upsert_filing_document(doc)
                 if tables:
                     repo.upsert_filing_tables(company_id, fl.filing_id, fl.source, seq, tables)
+                verdict = _record_extraction(repo, settings, company_id, fl.filing_id,
+                                             fl.source, seq, tables, report)
+                if verdict:
+                    verdicts[verdict] = verdicts.get(verdict, 0) + 1
                 n += 1
                 empty += not doc.text_chars
         repo.commit()
-    log.info("documents: downloaded %d files for company %s (%s:%s)%s",
+    log.info("documents: downloaded %d files for company %s (%s:%s)%s%s",
              n, company_id, market, symbol,
-             f" — {empty} with NO text extracted" if empty else "")
+             f" — {empty} with NO text extracted" if empty else "",
+             _verdict_summary(verdicts))
     return n
 
 
@@ -385,6 +469,7 @@ def backfill_documents(
     client = _client(settings)
     n = 0
     empty = 0
+    verdicts: dict[str, int] = {}
     for row in rows:
         cid = row["company_id"]
         filing_id, source = row["filing_id"], row["source"]
@@ -397,18 +482,32 @@ def backfill_documents(
         for seq, url in enumerate(urls):
             if not url or seq in done:
                 continue
-            doc, tables = _download_one(client, settings, cid, filing_id, source,
-                                        seq, url, market, symbol, extract_tables)
+            doc, tables, report = _download_one(client, settings, cid, filing_id, source,
+                                                seq, url, market, symbol, extract_tables)
             if doc is not None:
                 repo.upsert_filing_document(doc)
                 if tables:
                     repo.upsert_filing_tables(cid, filing_id, source, seq, tables)
+                verdict = _record_extraction(repo, settings, cid, filing_id,
+                                             source, seq, tables, report)
+                if verdict:
+                    verdicts[verdict] = verdicts.get(verdict, 0) + 1
                 n += 1
                 empty += not doc.text_chars
                 repo.commit()
-    log.info("backfill: downloaded %d files%s", n,
-             f" — {empty} with NO text extracted" if empty else "")
+    log.info("backfill: downloaded %d files%s%s", n,
+             f" — {empty} with NO text extracted" if empty else "",
+             _verdict_summary(verdicts))
     return n
+
+
+def _verdict_summary(verdicts: dict[str, int]) -> str:
+    """Say how the parses landed. A run that reports only 'downloaded 40 files'
+    hides the four that came out wrong."""
+    if not verdicts:
+        return ""
+    parts = [f"{verdicts[v]} {v}" for v in ("pass", "review", "fail") if verdicts.get(v)]
+    return f" — extraction: {', '.join(parts)}"
 
 
 def _parse_doc_urls(raw) -> list[str]:

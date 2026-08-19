@@ -129,6 +129,33 @@ CREATE TABLE IF NOT EXISTS filing_tables (
 CREATE INDEX IF NOT EXISTS idx_filing_tables_doc
     ON filing_tables(company_id, filing_id, source, doc_seq);
 
+-- Per-document extraction verdict. The point of this table is that a failed or
+-- doubtful parse leaves a *record* instead of a quietly empty result: 'review'
+-- rows are the human queue, and 'pass' rows are the pool a periodic random audit
+-- samples from to measure what the checks are missing.
+CREATE TABLE IF NOT EXISTS filing_extraction_reports (
+    company_id     INTEGER NOT NULL REFERENCES companies(company_id) ON DELETE CASCADE,
+    filing_id      TEXT NOT NULL,
+    source         TEXT NOT NULL,
+    doc_seq        INTEGER NOT NULL DEFAULT 0,
+    verdict        TEXT NOT NULL,          -- 'pass' | 'review' | 'fail'
+    reasons        TEXT,                   -- newline-joined, human-readable
+    token_recall   REAL,                   -- share of source text that survived
+    numeric_recall REAL,                   -- share of source numbers that survived
+    arith_checks   INTEGER DEFAULT 0,      -- self-checking sums attempted
+    arith_passed   INTEGER DEFAULT 0,
+    agreement      REAL,                   -- independent-detector consensus (NULL = not run)
+    crosscheck     REAL,                   -- agreement with other sources (NULL = not run)
+    tables_total   INTEGER DEFAULT 0,
+    tables_flagged INTEGER DEFAULT 0,
+    detail         TEXT,                   -- full report as JSON
+    reviewed_at    TEXT,                   -- set when a human has signed this off
+    checked_at     TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (company_id, filing_id, source, doc_seq)
+);
+CREATE INDEX IF NOT EXISTS idx_extraction_reports_verdict
+    ON filing_extraction_reports(verdict, checked_at);
+
 -- Daily FX for local <-> USD normalization ------------------------------------
 -- rate_type 'spot' = daily close; 'avg' = mean of daily spot over a fiscal period
 -- (rate_date = that period's period_end). Accounting-correct USD conversion uses

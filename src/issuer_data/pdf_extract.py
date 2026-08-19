@@ -54,6 +54,16 @@ class StructuredDoc:
     page_count: int = 0
     escalated_count: int = 0
     est_cost: float = 0.0
+    # Per-page text, kept so an extracted field can name the page it came from —
+    # a reviewer needs somewhere to look, not just a value.
+    page_text: dict[int, str] = field(default_factory=dict)
+    # Reference-free verdict (see pdf_validate). None when validation was skipped.
+    validation: object | None = None
+
+    @property
+    def verdict(self) -> str:
+        """'pass' | 'review' | 'fail' — 'unknown' when validation did not run."""
+        return getattr(self.validation, "verdict", "unknown")
 
 
 # --------------------------------------------------------------- intermediate
@@ -222,6 +232,29 @@ def _join(acc: str, nxt: str) -> str:
     return acc + " " + nxt
 
 
+def content_lines(pages: list[dict], *, band: float = 0.12) -> list[tuple[int, str]]:
+    """The (page_no, text) lines reflow is *expected* to keep.
+
+    Everything the engine deliberately discards — running headers/footers found
+    by recurrence, page-number lines — is filtered out here. Coverage
+    (``pdf_validate``) measures the output against this list rather than the raw
+    text layer, so a header that was dropped on purpose never reads as content
+    that went missing. Reflow and coverage therefore cannot drift apart: both
+    start from this one definition of "content".
+    """
+    drop = _recurring_lines(pages, band, at_top=True) | _recurring_lines(pages, band, at_top=False)
+    kept: list[tuple[int, str]] = []
+    for page in pages:
+        for ln in page.get("lines") or []:
+            text = (ln.get("text") or "").strip()
+            if not text:
+                continue
+            if _norm_key(text) in drop or _PAGE_NUM_RE.match(text):
+                continue
+            kept.append((page["page_no"], text))
+    return kept
+
+
 def reflow_narrative(pages: list[dict], *, band: float = 0.12) -> str:
     """Strip running headers/footers + page numbers and merge paragraphs.
 
@@ -229,21 +262,13 @@ def reflow_narrative(pages: list[dict], *, band: float = 0.12) -> str:
     numbers by a numeric-line shape, and paragraphs are merged until a line ends
     with sentence punctuation (works for latin and CJK terminators).
     """
-    drop = _recurring_lines(pages, band, at_top=True) | _recurring_lines(pages, band, at_top=False)
     paragraphs: list[str] = []
     cur = ""
-    for page in pages:
-        for ln in page.get("lines") or []:
-            text = (ln.get("text") or "").strip()
-            if not text:
-                continue
-            key = _norm_key(text)
-            if key in drop or _PAGE_NUM_RE.match(text):
-                continue
-            cur = _join(cur, text)
-            if text.endswith(_SENT_END):
-                paragraphs.append(cur)
-                cur = ""
+    for _page_no, text in content_lines(pages, band=band):
+        cur = _join(cur, text)
+        if text.endswith(_SENT_END):
+            paragraphs.append(cur)
+            cur = ""
     if cur:
         paragraphs.append(cur)
     return "\n\n".join(paragraphs).strip()
@@ -280,7 +305,7 @@ def ground_numbers(rows: list[list[str]], raw_text: str) -> float:
 
 # ----------------------------------------------------------------- pdf front-end
 def _parse_pages(pdf, fallback: str | None = "column-geometry",
-                 ml_dpi: int = 150) -> list[dict]:
+                 ml_dpi: int = 150, table_settings: dict | None = None) -> list[dict]:
     pages: list[dict] = []
     for page in pdf.pages:
         rep: dict = {
@@ -300,7 +325,7 @@ def _parse_pages(pdf, fallback: str | None = "column-geometry",
         except Exception as exc:  # noqa: BLE001
             log.debug("extract_text_lines failed on p%s: %s", page.page_number, exc)
         try:
-            for tbl in page.find_tables():
+            for tbl in page.find_tables(table_settings or {}):
                 col_x = []
                 try:
                     col_x = [float(c.bbox[0]) for c in tbl.columns]
@@ -332,6 +357,18 @@ def _parse_pages(pdf, fallback: str | None = "column-geometry",
                 log.debug("fallback table detection failed on p%s: %s", page.page_number, exc)
         pages.append(rep)
     return pages
+
+
+# A second opinion needs a detector that does not share the first one's
+# assumptions. "lines" reads ruling lines; "text" infers the grid from where the
+# words sit, so the two fail on different documents — which is exactly what makes
+# their agreement informative (see ``pdf_agreement``).
+DETECTORS = {
+    "lines": {"settings": None, "fallback": "column-geometry"},
+    "text": {"settings": {"vertical_strategy": "text", "horizontal_strategy": "text",
+                          "text_tolerance": 3},
+             "fallback": None},
+}
 
 
 def _ml_usable(engine: str) -> bool:
@@ -389,7 +426,9 @@ def apply_escalation(tables: list[StitchedTable], page_text: dict[int, str], raw
 
 def extract_structured(content: bytes, escalator=None, threshold: float = 0.66,
                        cost_per_page: float = 0.0, ml_engine: str | None = None,
-                       ml_dpi: int = 150) -> StructuredDoc:
+                       ml_dpi: int = 150, detector: str = "lines",
+                       validate: bool = True, field_specs=None,
+                       thresholds=None) -> StructuredDoc:
     """Parse a PDF into stitched tables + reflowed narrative with grounding.
 
     Tables below ``threshold`` grounding confidence are flagged ``needs_review``.
@@ -412,13 +451,14 @@ def extract_structured(content: bytes, escalator=None, threshold: float = 0.66,
     # An engine that was asked for owns the non-ruled pages: running the geometry
     # pass as well would fill those pages first and the requested engine's tables
     # would never be reached.
+    variant = DETECTORS.get(detector) or DETECTORS["lines"]
     fallback = {"table-transformer": "table-transformer",
-                "docling": None}.get(ml_engine, "column-geometry")
+                "docling": None}.get(ml_engine, variant["fallback"])
     if ml_engine == "docling" and docling_tables is None:
-        fallback = "column-geometry"        # conversion failed; keep the built-in
+        fallback = variant["fallback"]      # conversion failed; keep the built-in
 
     with pdfplumber.open(io.BytesIO(content)) as pdf:
-        pages = _parse_pages(pdf, fallback, ml_dpi)
+        pages = _parse_pages(pdf, fallback, ml_dpi, variant["settings"])
     if docling_tables:
         # Docling converts whole documents, so its tables arrive keyed by page
         # rather than through the per-page hook.
@@ -439,5 +479,18 @@ def extract_structured(content: bytes, escalator=None, threshold: float = 0.66,
     )
 
     text = reflow_narrative(pages)
-    return StructuredDoc(text=text, tables=tables, page_count=len(pages),
-                         escalated_count=escalated, est_cost=est_cost)
+    doc = StructuredDoc(text=text, tables=tables, page_count=len(pages),
+                        escalated_count=escalated, est_cost=est_cost,
+                        page_text=page_text)
+    if validate:
+        # Runs on every document by design: the checks are pure-python and cost
+        # nothing next to the parse, and a failure nobody looked for is a failure
+        # nobody finds.
+        from .pdf_validate import validate as run_validation
+
+        doc.validation = run_validation(pages, text, tables, field_specs=field_specs,
+                                        thresholds=thresholds)
+        if doc.validation.verdict != "pass":
+            log.info("PDF verdict=%s: %s", doc.validation.verdict,
+                     "; ".join(doc.validation.reasons))
+    return doc

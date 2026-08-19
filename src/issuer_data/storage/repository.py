@@ -263,6 +263,53 @@ class Repository:
                     n += 1
         return n
 
+    def upsert_extraction_report(self, company_id: int, filing_id: str, source: str,
+                                 doc_seq: int, report) -> None:
+        """Record the document-level verdict so a bad parse is visible, not silent.
+
+        Idempotent per document: a re-extraction overwrites its own verdict but
+        clears ``reviewed_at``, because a human's sign-off applies to the parse
+        they actually looked at, not to whatever replaced it.
+        """
+        import json as _json
+
+        cov = getattr(report, "coverage", None)
+        arith = getattr(report, "arithmetic", None)
+        cross = getattr(report, "crosscheck", None) or {}
+        self._exec(
+            "INSERT INTO filing_extraction_reports(company_id, filing_id, source, doc_seq, "
+            "verdict, reasons, token_recall, numeric_recall, arith_checks, arith_passed, "
+            "agreement, crosscheck, tables_total, tables_flagged, detail) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(company_id, filing_id, source, doc_seq) DO UPDATE SET "
+            "verdict=excluded.verdict, reasons=excluded.reasons, "
+            "token_recall=excluded.token_recall, numeric_recall=excluded.numeric_recall, "
+            "arith_checks=excluded.arith_checks, arith_passed=excluded.arith_passed, "
+            "agreement=excluded.agreement, crosscheck=excluded.crosscheck, "
+            "tables_total=excluded.tables_total, tables_flagged=excluded.tables_flagged, "
+            "detail=excluded.detail, reviewed_at=NULL, checked_at=datetime('now')",
+            (company_id, filing_id, source, doc_seq, report.verdict,
+             "\n".join(report.reasons), getattr(cov, "token_recall", None),
+             getattr(cov, "numeric_recall", None), getattr(arith, "checks", 0),
+             getattr(arith, "passed", 0), report.agreement, cross.get("score"),
+             report.tables_total, report.tables_flagged,
+             _json.dumps(report.to_dict(), ensure_ascii=False)),
+        )
+
+    def extraction_review_queue(self, limit: int = 50, verdict: str | None = None):
+        """Documents awaiting a human, worst first. The queue the checks exist for."""
+        sql = ["SELECT * FROM filing_extraction_reports WHERE reviewed_at IS NULL"]
+        params: list = []
+        if verdict:
+            sql.append("AND verdict = ?")
+            params.append(verdict)
+        else:
+            sql.append("AND verdict <> 'pass'")
+        sql.append("ORDER BY CASE verdict WHEN 'fail' THEN 0 ELSE 1 END, "
+                   "token_recall ASC, checked_at DESC LIMIT ?")
+        params.append(limit)
+        return self._exec(" ".join(sql), tuple(params)).fetchall()
+
     def filings_without_documents(self, company_id: int | None = None, limit: int | None = None):
         sql = (
             "SELECT f.company_id, f.filing_id, f.source, f.url, f.filing_type "

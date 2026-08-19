@@ -233,6 +233,60 @@ returns nothing and the local result is kept with `needs_review=1` (never fabric
 `VisionEscalator` interface is stubbed for scanned pages (needs a page-render backend).
 Cost is logged per run using `ISSUER_ESCALATION_COST_PER_PAGE`.
 
+### Knowing whether a parse worked (`validate`)
+
+PDFs differ without limit — layout, language, tables, charts, scans — so "was this parsed
+correctly?" cannot be answered in general without a label. Two narrower questions can be,
+and every document is checked against them automatically:
+
+**Does the extraction contradict itself?** Four checks that need no ground truth:
+
+| Check | Catches | Cost |
+| --- | --- | --- |
+| **Coverage** | content that silently vanished | free |
+| **Arithmetic** | a shifted cell or merged column | free |
+| **Engine consensus** | anything one detector reads ambiguously | a second parse |
+| **Cross-source** | figures that disagree with other sources | a DB query |
+
+Coverage is the half that grounding cannot see: `ground_numbers` asks "did we invent a
+number?", and a locally-read table always answers 1.0 because its digits come from the same
+text layer. It cannot ask "did we drop half the table?" — coverage does, by measuring how much
+of the page's own content reached the output. Arithmetic is the strongest reference-free
+signal in financial documents: when a 합계 / Total row equals the rows above it, the parse of
+that column is almost certainly right, and a shifted cell breaks the identity immediately.
+
+**Did we get the fields we came for?** Declare them as a JSON schema and every value carries
+its page and the line it was read from, so a review is one line to check rather than an
+80-page PDF.
+
+```bash
+python -m issuer_data validate --file filing.pdf            # verdict + the evidence for it
+python -m issuer_data validate --file filing.pdf --agreement          # add a second detector
+python -m issuer_data validate --file filing.pdf --crosscheck-symbol KR:005930
+python -m issuer_data validate --file filing.pdf --fields schema.json # require these fields
+python -m issuer_data review-queue                          # documents awaiting a human
+```
+
+Every document gets one of three verdicts, stored in `filing_extraction_reports`:
+
+- **PASS** — every check that could run, ran clean. Not a guarantee of correctness: it means
+  nothing contradicted the extraction.
+- **REVIEW** — a signal fired. This is the human queue, and it is meant to be small.
+- **FAIL** — nothing usable: no text layer, content lost wholesale, or a required field
+  missing.
+
+A check that could not run never counts against a document: a table with no total row reports
+zero attempted checks, not a failed one. Runs report their verdict mix (`— extraction: 38
+pass, 2 review`) so a bad parse cannot pass as a quiet success.
+
+Cross-source validation exploits something this project already has: the same companies'
+financials arrive from DART, EDGAR, FMP, Alpha Vantage and yfinance. A figure that also
+arrives through an independent API needs no reviewer at all. Unit scale is handled (a filing
+prints 백만원 where the API stores 원), and the three outcomes are deliberately not two —
+*confirmed*, *conflict* (the document has that row and none of its cells agree — the strong
+signal), and *unmatched*, which is excluded from the score because an interim report simply
+does not carry every annual line item.
+
 ### Measuring extraction accuracy (`eval`)
 
 ```bash
@@ -249,6 +303,25 @@ but is space-delimited between 어절), and scoring English alone said nothing a
 synthetic cases are authored from known data so ground truth is exact. Add real labelled
 documents under `data/eval/<name>/{doc.pdf, expected.json}` (see `data/eval/README.md`) and
 they are scored automatically — no code change.
+
+The eval also reports how well the label-free gate above tracks the labelled truth:
+
+```
+verdicts: fail 1, pass 7
+gate (TEDS >= 0.95): caught 1, missed 0, false alarms 0, review rate 20%
+```
+
+**`missed`** is the number that matters — documents the gate passed while the labels say they
+are wrong. That is its blind spot, and the only honest reason to keep auditing a random sample
+of PASS documents by hand. The gold set deliberately includes an image-only PDF that the local
+engine cannot read, so there is always at least one case that *must* be caught; it also drags
+the overall TEDS down, which is the point — an eval containing only documents you already
+handle tells you nothing.
+
+Calibrating is the job the labels exist for: pick thresholds where the measured `missed` rate
+is acceptable, rather than trusting the defaults in `.env.example`. Human effort then goes to
+three places only — a small stratified gold set per document family (not per document), the
+REVIEW queue, and a random audit of PASS documents to measure what the gate misses.
 
 ## Development
 

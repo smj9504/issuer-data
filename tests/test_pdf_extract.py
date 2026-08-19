@@ -211,3 +211,70 @@ def test_sparse_but_real_table_is_kept():
     rows = [["1. Class of shares", "Ordinary shares", "", "", "Type of shares", "Not applicable"],
             ["Stock code", "00700", "", "", "Description", ""]]
     assert not _too_empty(rows)
+
+
+# ---------------------------------------- the verdict, end to end on real PDFs
+def test_a_clean_pdf_passes_the_gate_with_full_coverage():
+    pytest.importorskip("reportlab")
+    from issuer_data.eval.gold import _table_pdf
+    from issuer_data.pdf_extract import extract_structured
+
+    rows = [["Account", "2023"], ["Revenue", "600"], ["Cost", "400"], ["Total", "1,000"]]
+    sdoc = extract_structured(_table_pdf(rows))
+    assert sdoc.verdict == "pass"
+    assert sdoc.validation.coverage.token_recall == 1.0
+    # the total row checks out against the rows above it — reference-free evidence
+    assert sdoc.validation.arithmetic.checks == 1
+    assert sdoc.validation.arithmetic.passed == 1
+
+
+def test_a_scanned_pdf_fails_loudly_instead_of_returning_empty():
+    """The failure this whole gate exists for: an image-only page used to yield a
+    clean, empty result that looked like success."""
+    pytest.importorskip("reportlab")
+    pytest.importorskip("PIL")
+    from issuer_data.eval.gold import _scanned_pdf
+    from issuer_data.pdf_extract import extract_structured
+
+    content = _scanned_pdf([["Account", "2023"], ["Revenue", "1234"]])
+    sdoc = extract_structured(content)
+    assert sdoc.tables == []
+    assert sdoc.verdict == "fail"
+    assert "no text layer" in sdoc.validation.reasons[0]
+
+
+def test_a_pdf_whose_total_is_wrong_goes_to_review():
+    """Nothing is compared to a label here: the document contradicts itself."""
+    pytest.importorskip("reportlab")
+    from issuer_data.eval.gold import _table_pdf
+    from issuer_data.pdf_extract import extract_structured
+
+    rows = [["Account", "2023"], ["Revenue", "600"], ["Cost", "400"], ["Total", "9,999"]]
+    sdoc = extract_structured(_table_pdf(rows))
+    assert sdoc.verdict == "review"
+    assert any("do not add up" in r for r in sdoc.validation.reasons)
+
+
+def test_validation_can_be_switched_off():
+    pytest.importorskip("reportlab")
+    from issuer_data.eval.gold import _table_pdf
+    from issuer_data.pdf_extract import extract_structured
+
+    sdoc = extract_structured(_table_pdf([["A", "1"], ["B", "2"]]), validate=False)
+    assert sdoc.validation is None
+    assert sdoc.verdict == "unknown"
+
+
+def test_the_text_detector_is_an_independent_second_opinion():
+    """The consensus check needs a detector that does not share the first one's
+    assumptions: this one infers the grid from where the words sit."""
+    pytest.importorskip("reportlab")
+    from issuer_data.eval.gold import _table_pdf
+    from issuer_data.pdf_agreement import agreement
+    from issuer_data.pdf_extract import extract_structured
+
+    content = _table_pdf([["Account", "2023"], ["Revenue", "600"], ["Cost", "400"]])
+    sdoc = extract_structured(content)
+    report = agreement(content, reference=sdoc.tables)
+    assert report.other_engine == "text"
+    assert report.score is not None
