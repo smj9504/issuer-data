@@ -102,3 +102,58 @@ def test_declared_migrations_match_the_shipped_schema(tmp_path):
     for table, column, _decl in _ADDED_COLUMNS:
         cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
         assert column in cols, f"{table}.{column} is not in schema.sql"
+
+
+def test_connect_creates_tables_added_after_the_database_was_made(tmp_path):
+    """A new *table* needs no ALTER — only somebody re-running the schema.
+
+    Nothing prompted that, so a stale local database failed partway through a
+    collection with a bare "no such table: scan_progress", naming the table but
+    not the remedy. connect() now applies the schema itself.
+    """
+    db = tmp_path / "old.sqlite"
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        "CREATE TABLE companies(company_id INTEGER PRIMARY KEY, name TEXT, source TEXT);"
+    )
+    conn.commit()
+    conn.close()
+
+    from issuer_data.storage.db import connect
+
+    live = connect(db)
+    tables = {r[0] for r in live.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    assert "scan_progress" in tables
+    assert "api_call_budget" in tables
+
+
+def test_connect_preserves_existing_data(tmp_path):
+    """Auto-applying the schema must never disturb rows already stored."""
+    from issuer_data.storage.db import connect, init_db
+
+    db = tmp_path / "live.sqlite"
+    init_db(db)
+    seed = connect(db)
+    seed.execute("INSERT INTO companies(company_id, name, source) VALUES (7,'Kept','dart')")
+    seed.commit()
+    seed.close()
+
+    again = connect(db)
+    assert again.execute("SELECT name FROM companies WHERE company_id=7").fetchone()[0] == "Kept"
+
+
+def test_ensure_schema_can_be_switched_off(tmp_path):
+    """A read-only caller can open a database without altering its structure."""
+    from issuer_data.storage.db import connect
+
+    db = tmp_path / "untouched.sqlite"
+    conn = sqlite3.connect(db)
+    conn.executescript("CREATE TABLE only_this(x INTEGER);")
+    conn.commit()
+    conn.close()
+
+    live = connect(db, ensure_schema=False)
+    tables = {r[0] for r in live.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    assert tables == {"only_this"}
