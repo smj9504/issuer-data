@@ -8,6 +8,7 @@ import sys
 
 from dotenv import load_dotenv
 
+from .collectors.base import DEFAULT_DAILY_CALL_BUDGET
 from .config import get_settings
 from .logging import get_logger, setup_logging
 from .storage.db import connect, init_db
@@ -68,8 +69,13 @@ def cmd_collect(args) -> int:
                     total += _collect_crosscutting(orch, data_type, market, symbols, args)
                     continue
                 if data_type in COVERAGE_TYPES:
-                    total += orch.collect_coverage(market, data_type, args.source,
-                                                   symbols, args.start, args.end)
+                    if getattr(args, "restart", False):
+                        _clear_scan_cursor(orch, market, data_type, args)
+                    total += orch.collect_coverage(
+                        market, data_type, args.source, symbols, args.start, args.end,
+                        resume=getattr(args, "resume", False),
+                        max_api_calls=getattr(args, "max_api_calls", None),
+                    )
                     continue
                 total += orch.collect(
                     market=market,
@@ -88,6 +94,27 @@ def cmd_collect(args) -> int:
         conn.close()
     print(f"Done. Rows written: {total}")
     return 0
+
+
+def _clear_scan_cursor(orch, market: str, data_type: str, args) -> None:
+    """Drop the resume cursor for exactly the scope about to be collected.
+
+    Scoped, not global: the cursor key includes the resolved date range, so
+    clearing it for a 2026 sweep must not discard the record of a finished 2025
+    one — that would silently re-spend a day's quota on data already stored.
+    """
+    from .collectors.registry import default_source
+    from .orchestrator import Orchestrator
+    from .utils.dates import default_range
+
+    src = args.source or default_source(market.upper(), data_type)
+    if not src:
+        return
+    _, _, _, dated = Orchestrator.COVERAGE[data_type]
+    start, end = default_range(args.start, args.end, default_years=2) if dated else (None, None)
+    n = orch.repo.clear_scan_progress(market.upper(), data_type, src, start, end)
+    if n:
+        log.info("Cleared %d resume-cursor rows for %s/%s", n, market.upper(), data_type)
 
 
 def _collect_crosscutting(orch, data_type, market, symbols, args) -> int:
@@ -351,9 +378,42 @@ def cmd_status(args) -> int:
                   f"{r['source'] or '':11} {r['status'] or '':8} "
                   f"{(r['rows_written'] or 0):>6}  {r['started_at'] or ''}"
                   + (f"  ERR: {r['error']}" if r['error'] else ""))
+        _print_scan_state(conn)
     finally:
         conn.close()
     return 0
+
+
+def _print_scan_state(conn) -> None:
+    """Show resumable sweeps and today's API spend.
+
+    This is the pair of numbers you need before deciding whether to re-run with
+    --resume: how much of each scope is left, and whether the day's budget has
+    anything in it. Both are silent when there is nothing to report, so the
+    normal single-symbol workflow sees no extra output.
+    """
+    scans = conn.execute(
+        "SELECT market, data_type, source, range_start, range_end, "
+        "SUM(status='done') AS done, SUM(status='error') AS failed, "
+        "SUM(rows_written) AS rows_written, SUM(api_calls) AS api_calls "
+        "FROM scan_progress GROUP BY market, data_type, source, range_start, range_end "
+        "ORDER BY MAX(updated_at) DESC LIMIT 10"
+    ).fetchall()
+    if scans:
+        print("\nScan progress (use --resume to continue a scope):")
+        for r in scans:
+            span = f"{r['range_start'] or '*'}..{r['range_end'] or '*'}"
+            print(f"  {r['market']}/{r['data_type']} via {r['source']} {span}: "
+                  f"{r['done']} done, {r['failed']} failed, "
+                  f"{r['rows_written'] or 0} rows, {r['api_calls'] or 0} API calls")
+    budget = conn.execute(
+        "SELECT source, call_date, calls FROM api_call_budget "
+        "ORDER BY call_date DESC, source LIMIT 5"
+    ).fetchall()
+    if budget:
+        print("\nAPI calls by day:")
+        for r in budget:
+            print(f"  {r['call_date']} {r['source']}: {r['calls']}")
 
 
 def cmd_query(args) -> int:
@@ -452,6 +512,17 @@ def build_parser() -> argparse.ArgumentParser:
                         "(needs `pip install '.[ml]'`; slower, no API cost)")
     c.add_argument("--ml-engine", choices=("table-transformer", "docling"),
                    help="which ML table detector to use (implies --ml-tables)")
+    c.add_argument("--resume", action="store_true",
+                   help="skip symbols already completed for this exact scope "
+                        "(market/type/source + date range). Use for a market-wide "
+                        "sweep that stopped on the daily API quota.")
+    c.add_argument("--restart", action="store_true",
+                   help="forget this scope's resume cursor before collecting, so the "
+                        "sweep starts from the first symbol again")
+    c.add_argument("--max-api-calls", type=int,
+                   help="stop after this many API calls today (the count persists in "
+                        "the database across runs). DART meters ~20,000/day per key "
+                        f"and locks out on overrun; {DEFAULT_DAILY_CALL_BUDGET} is a safe cap.")
     c.set_defaults(func=cmd_collect)
 
     d = sub.add_parser("download-docs", help="backfill original documents for stored filings")

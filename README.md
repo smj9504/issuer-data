@@ -69,6 +69,15 @@ python -m issuer_data collect --market us --type filings --symbols AAPL --filing
 # DART 공시유형: 지분공시(D)에 주식등의대량보유상황보고서, 주요사항보고(B)에 자기주식처분결정
 python -m issuer_data collect --market kr --type filings --source dart --symbols 005930     --dart-kind D --filing-type 대량보유
 
+# Market-wide sweep of a metered source: no --symbols means every stored security
+# in that market. --max-api-calls stops the sweep on its own terms when the day's
+# quota runs out (DART meters ~20,000/day per key and locks out on overrun), and
+# --resume picks up at the first symbol that did not finish.
+python -m issuer_data collect --market kr --type stake \
+    --start 2026-01-01 --end 2026-08-31 --max-api-calls 18000
+python -m issuer_data collect --market kr --type stake \
+    --start 2026-01-01 --end 2026-08-31 --max-api-calls 18000 --resume
+
 # FX (USDKRW/USDHKD) for currencies present in the DB, then compare across markets
 python -m issuer_data collect --market all --type fx --start 2024-06-01 --end 2024-07-10
 python -m issuer_data compare --symbols AAPL,005930,0700.HK

@@ -207,8 +207,25 @@ class Orchestrator:
         "treasury": ("fetch_treasury_disposals", "kr_treasury_disposals", "company", True),
     }
 
+    # Coverage tables keyed by DART 접수번호. For these a filing already stored
+    # never needs its 원문 re-fetched, which is what makes a repeat sweep cheap.
+    _RCEPT_KEYED = {"stake": "kr_stake_changes", "treasury": "kr_treasury_disposals"}
+
     def collect_coverage(self, market: str, data_type: str, source: str | None,
-                         symbols: list[str] | None, start: str | None, end: str | None) -> int:
+                         symbols: list[str] | None, start: str | None, end: str | None,
+                         resume: bool = False, max_api_calls: int | None = None) -> int:
+        """Collect one coverage type across `symbols`, or the whole market.
+
+        With no `symbols` this sweeps every stored security in the market. That
+        is thousands of symbols against a metered API, so the sweep is made
+        interruptible: each symbol's outcome is committed as it finishes, and
+        `resume=True` skips the ones already done for this exact scope
+        (market/type/source plus the date range). `max_api_calls` caps the day's
+        spend; hitting it ends the run cleanly with the cursor intact, rather
+        than letting the provider lock the key out partway through.
+        """
+        from .collectors.base import BaseCollector, CallBudget, QuotaExceededError
+
         market = market.upper()
         method_name, table, grain, dated = self.COVERAGE[data_type]
         src = source or default_source(market, data_type)
@@ -224,26 +241,54 @@ class Orchestrator:
             # If the collector doesn't override the coverage method, mark 'skipped'
             # up-front so an unimplemented type never shows 'ok' with 0 rows (which
             # happens when the symbol list is empty and the method is never called).
-            from .collectors.base import BaseCollector
             if getattr(type(collector), method_name) is getattr(BaseCollector, method_name):
                 raise NotSupportedError(f"{src} does not implement {data_type}")
+            budget = None
+            if max_api_calls is not None and hasattr(collector, "budget"):
+                budget = CallBudget(self.repo, src, max_api_calls)
+                collector.budget = budget
+                log.info("%s budget: %d of %d calls left today",
+                         src, budget.remaining, budget.limit)
             syms = self._resolve_symbols(market, symbols)
+            start2, end2 = default_range(start, end, default_years=2) if dated else (None, None)
+            if resume:
+                done = self.repo.scan_done_symbols(market, data_type, src, start2, end2)
+                remaining = [s for s in syms if s not in done]
+                log.info("Resuming %s/%s: %d of %d symbols already done",
+                         market, data_type, len(syms) - len(remaining), len(syms))
+                syms = remaining
             self.ensure_master(market, syms)
-            if dated:
-                start2, end2 = default_range(start, end, default_years=2)
+            rcept_table = self._RCEPT_KEYED.get(data_type)
             for sym in syms:
+                before_calls = getattr(collector, "api_calls", 0)
+                if rcept_table is not None and hasattr(collector, "seen_rcept_nos"):
+                    cid = self.repo.get_company_id_for_symbol(market, sym)
+                    collector.seen_rcept_nos = (
+                        self.repo.known_rcept_nos(rcept_table, cid, src) if cid else set()
+                    )
                 try:
                     items = method(sym, start2, end2) if dated else method(sym)
-                except NotSupportedError:
+                except (NotSupportedError, QuotaExceededError):
                     raise
                 except Exception as exc:  # noqa: BLE001
                     log.warning("%s %s:%s failed: %s", data_type, market, sym, exc)
+                    self._mark_symbol(market, data_type, src, start2, end2, sym, "error",
+                                      0, getattr(collector, "api_calls", 0) - before_calls,
+                                      str(exc), budget)
                     continue
                 n = self.repo.upsert_coverage(table, grain, items)
                 self.repo.commit()
                 rows += n
+                self._mark_symbol(market, data_type, src, start2, end2, sym, "done", n,
+                                  getattr(collector, "api_calls", 0) - before_calls,
+                                  None, budget)
                 log.info("%s %s:%s -> %d rows", data_type, market, sym, n)
             self.repo.finish_run(run_id, "ok", rows)
+        except QuotaExceededError as exc:
+            # Not a failure: the sweep stopped where it was told to. The cursor is
+            # committed per symbol, so --resume picks up from exactly here.
+            log.warning("Stopping %s/%s: %s", market, data_type, exc)
+            self.repo.finish_run(run_id, "quota", rows, str(exc))
         except NotSupportedError as exc:
             log.warning("Skip %s/%s via %s: %s", market, data_type, src, exc)
             self.repo.finish_run(run_id, "skipped", rows, str(exc))
@@ -251,6 +296,19 @@ class Orchestrator:
             log.error("Error %s/%s via %s: %s", market, data_type, src, exc)
             self.repo.finish_run(run_id, "error", rows, str(exc))
         return rows
+
+    def _mark_symbol(self, market, data_type, src, start, end, symbol, status, rows,
+                     api_calls, error, budget) -> None:
+        """Commit one symbol's outcome, then flush the call ledger.
+
+        Both happen at the symbol boundary so a hard kill loses at most one
+        symbol: the cursor never claims a symbol is done before its rows are
+        committed, and the day's call count never drifts far behind reality.
+        """
+        self.repo.mark_scan_symbol(market, data_type, src, start, end, symbol, status,
+                                   rows, api_calls, error)
+        if budget is not None:
+            budget.flush()
 
     # ------------------------------------------------------------------ helpers
     def _resolve_symbols(self, market: str, symbols: list[str] | None) -> list[str]:

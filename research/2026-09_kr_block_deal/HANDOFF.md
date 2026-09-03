@@ -1,12 +1,15 @@
-# 인수인계 — 남은 두 항목
+# 인수인계 — 남은 한 항목
 
-작성: 2026-09-03 · 대상: 다른 세션에서 이어받을 사람
+작성: 2026-09-03 · 갱신: 2026-09-03 (전체 시장 스캔 구현 완료)
+대상: 다른 세션에서 이어받을 사람
 전제: `research/2026-09_kr_block_deal/README.md`(설계·실측)를 먼저 읽을 것.
 
 현재 상태는 **동작하는 파이프라인**이다. `--type stake` / `--type treasury`로 수집되고,
 `v_kr_stake_sales` / `v_kr_stake_deals` / `v_kr_treasury_price_check` 뷰로 분류·집계·
-정합성 검증이 된다 (005930 실데이터 검증 완료). 아래 두 항목은 **미완성 기능이 아니라
-성격이 다른 두 가지 남은 일**이다.
+정합성 검증이 된다 (005930 실데이터 검증 완료). 전 종목 스캔도 재개·한도 대응까지
+구현·실측 완료다.
+
+**남은 건 1건이고, 그건 코드로 고칠 수 없는 제도적 한계다.**
 
 ---
 
@@ -47,55 +50,58 @@ D001(주식등의대량보유상황보고서) 원문의 변동명세에는 **거
 
 ---
 
-## 2. 전체 시장 스캔 — 실제로 남은 구현 과제
+## 2. 전체 시장 스캔 — ✅ 완료 (2026-09-03)
 
-### 문제
+`--symbols` 없이 돌리면 DB의 KR 전 종목을 순회한다. 중단·재개와 일일 한도 대응이
+들어갔고, 실호출로 검증했다. 설계 근거와 실측치는 **README의 "전체 시장 스캔" 절**에
+있다. 여기엔 이어받을 때 알아야 할 것만 적는다.
 
-DART는 **회사별 조회**가 기본이라 "전 종목 블록딜 훑기"가 곧 종목 수 × API 호출이 된다.
-현재는 `--symbols`로 명시한 종목만 처리한다.
-
-호출량 계산 (실측 기반):
-- 종목 1개당: D 목록 1회 + **대량보유 보고서 건수만큼** 원문 호출
-- 005930의 2026-08 한 달: 목록 1 + 원문 1 = 2회 → 변동 32행
-- 코스피+코스닥 ≈ 2,600 종목, 1년 범위면 종목당 원문이 수 건~수십 건
-  → **최소 수만 회**. OpenDART 일일 한도(계정당 20,000회)를 초과할 수 있음
-
-### 설계 시 고려할 것
-
-1. **한도 관리가 핵심.** OpenDART는 일일 호출 한도가 있고, 초과 시 계정이 막힌다.
-   - 진행 상황을 저장해 **중단·재개**가 가능해야 한다 (`collection_runs` 활용 또는
-     별도 커서 테이블). 5,000종목 스캔 중 3,000번째에서 한도에 걸렸을 때 처음부터
-     다시 도는 설계는 실용성이 없다
-   - 이미 수집한 `rcept_no`는 건너뛰기 (재실행 시 원문 재호출 방지)
-
-2. **불필요한 원문 호출 줄이기.** 현재 `fetch_stake_changes`는 이미
-   `"대량보유" not in filing_type`이면 원문을 열지 않는다 (임원·주요주주 보고서가
-   D 목록의 대다수라 이 필터가 호출량을 크게 줄인다). 이 원칙 유지할 것.
-
-3. **종목 목록 확보 경로**
-   - `securities` 테이블에서 KR 종목을 읽는 게 자연스럽다 (`--market kr --type master`로
-     선행 수집)
-   - 또는 DART `corp_code` 전체 목록 (OpenDartReader `corp_codes`) — 비상장 포함이라
-     상장사 필터링 필요
-
-4. **레이트리밋**: 이미 `HttpClient(rate_limit=settings.default_rate_limit)`를 쓰고
-   있으므로 초당 호출은 제어된다. 문제는 초당이 아니라 **일일 총량**이다.
-
-### 제안하는 인터페이스 (미확정)
+### 사용법
 
 ```bash
-# 종목 미지정 시 DB의 KR 종목 전체를 순회, 중단 지점부터 재개
-python -m issuer_data collect --market kr --type stake --start 2026-01-01 --end 2026-08-31
-python -m issuer_data collect --market kr --type stake --resume
+# 전 종목, 예산 소진 시 그 자리에서 중단
+python -m issuer_data collect --market kr --type stake \
+    --start 2026-01-01 --end 2026-08-31 --max-api-calls 18000
+
+# 다음 날 이어서
+python -m issuer_data collect --market kr --type stake \
+    --start 2026-01-01 --end 2026-08-31 --max-api-calls 18000 --resume
+
+# 진행률 + 오늘 쓴 호출 수
+python -m issuer_data status
 ```
 
-`orchestrator._resolve_symbols`가 이미 "symbols 미지정 → DB의 해당 market 전 종목"으로
-동작하므로 순회 자체는 대부분 되어 있다. **없는 건 재개 가능성과 한도 대응이다.**
+`--restart`는 해당 스코프의 커서만 지운다 (전역 삭제 아님).
 
-### 검증 방법
+### 실측 결과 (라이브 호출로 확인)
 
-- 소수 종목(5~10개)으로 먼저 호출량을 실측해 종목당 평균 호출 수를 구할 것
-- 그 값으로 전체 스캔 비용을 추정한 뒤 실행 여부를 판단 (추정 없이 전체를 돌리지 말 것)
+- 종목당 평균 **5.75회** (대형주 8종목 × 8개월; 최소 2, 최대 14)
+- 전 종목(≈2,600) 1년치 추정 **≈22,000회 → 이틀치 예산**. 표본이 대형주라 상한값이다
+- 재실행 시 005930이 **14회 → 1회** (저장된 접수번호 13건 건너뜀), `--resume` 시 0회
+- 한도 도달 시 실행이 `quota` 상태로 기록되고 커서는 그대로 남는다 (`error` 아님)
+
+### 이어받을 때 주의할 점
+
+1. **커서 키에 날짜 범위가 들어간다.** 2025년치를 끝낸 종목은 2026년 스윕에서
+   완료로 치지 않는다. 이걸 빼면 `--start`를 넓혔을 때 전 종목이 이미 완료로 보이고
+   아무것도 안 가져온다 (`test_cursor_is_scoped_to_the_date_range`가 고정).
+2. **실패한 종목은 `--resume`이 건너뛰지 않는다.** `done`만 건너뛴다. 일시적 오류를
+   영구 누락으로 만들지 않기 위해서다.
+3. **호출 예산은 DB에 있다.** 메모리 카운터로 바꾸면 재실행마다 0으로 돌아가 실제
+   한도를 지나친다 (`test_budget_survives_a_process_restart`가 고정).
+4. **예산 소진은 종목 실패로 기록하지 않는다.** 그 종목은 실행될 기회조차 없었으므로
+   `error`로 남기면 데이터에 대한 거짓말이 된다. 커서에서 아예 빠진다.
+5. **`--type master`를 먼저 돌려야 한다.** 순회 대상은 `securities` 테이블에서 온다.
+   ```bash
+   python -m issuer_data collect --market kr --type master
+   ```
+
+### 아직 안 한 것 (원하면)
+
+- **실제 전 종목 스윕은 아직 돌리지 않았다.** 8종목 표본으로 비용만 실측했다.
+  돌릴지 여부는 예산 판단의 문제지 구현의 문제가 아니다.
+- 여러 API 키 로테이션 (한도가 키당이므로 이론상 가능). 지금 비용 추정으로는
+  불필요해 보인다 — 전 종목 1년치가 이틀이면 끝난다.
 
 ---
 
@@ -113,10 +119,17 @@ python -m issuer_data collect --market kr --type stake --resume
 4. **가격 조인은 (company, date)당 1건으로 접어야 한다.** krx·yfinance가 같은 날
    종가를 둘 다 갖고 있어 조인이 갈라지면 집계가 부풀려진다
    (`test_price_check_view_does_not_fan_out_across_price_sources`가 고정).
+5. **`fetch_stake_changes`는 `"대량보유"`가 아닌 D 목록 항목의 원문을 열지 않는다.**
+   임원·주요주주 보고서가 D 목록의 대다수라 이 필터가 호출량 대부분을 걸러낸다.
+   전 종목 스캔이 예상보다 싼 이유가 이것이다.
 
 ## 관련 파일
 
 - `src/issuer_data/kr_disclosure_parse.py` — 원문 파서
-- `src/issuer_data/collectors/kr_dart.py` — `fetch_stake_changes` / `fetch_treasury_disposals`
-- `src/issuer_data/storage/schema.sql` — 테이블 2개 + 뷰 3개
-- `tests/test_kr_disclosure_parse.py` — 회귀 테스트 15건
+- `src/issuer_data/collectors/kr_dart.py` — `fetch_stake_changes` / `fetch_treasury_disposals`,
+  호출 과금(`_spend`)과 접수번호 건너뛰기
+- `src/issuer_data/collectors/base.py` — `CallBudget` / `QuotaExceededError`
+- `src/issuer_data/orchestrator.py` — `collect_coverage`의 재개·예산 루프
+- `src/issuer_data/storage/schema.sql` — 테이블 4개(+`scan_progress`, `api_call_budget`) + 뷰 3개
+- `tests/test_kr_disclosure_parse.py` — 파서 회귀 테스트 15건
+- `tests/test_market_scan_resume.py` — 재개·예산·접수번호 회귀 테스트 20건

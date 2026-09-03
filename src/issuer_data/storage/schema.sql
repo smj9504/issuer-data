@@ -166,6 +166,41 @@ CREATE TABLE IF NOT EXISTS collection_runs (
     error        TEXT
 );
 
+-- Scan cursor: where a per-symbol sweep got to -------------------------------
+-- A full-market DART sweep is thousands of symbols x several API calls each and
+-- will hit the daily quota partway through. Restarting from the top would burn
+-- the next day's quota re-fetching what is already stored, so each symbol's
+-- outcome is recorded as it completes and `--resume` skips the done ones.
+-- Keyed on the scope actually being swept (market/data_type/source + the date
+-- range), because the same symbol finished for 2025 is NOT finished for 2026.
+CREATE TABLE IF NOT EXISTS scan_progress (
+    market      TEXT NOT NULL,
+    data_type   TEXT NOT NULL,
+    source      TEXT NOT NULL,
+    range_start TEXT NOT NULL DEFAULT '',
+    range_end   TEXT NOT NULL DEFAULT '',
+    symbol      TEXT NOT NULL,
+    status      TEXT NOT NULL,           -- 'done' | 'error'
+    rows_written INTEGER DEFAULT 0,
+    api_calls   INTEGER DEFAULT 0,
+    error       TEXT,
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (market, data_type, source, range_start, range_end, symbol)
+);
+CREATE INDEX IF NOT EXISTS idx_scan_progress_status ON scan_progress(status);
+
+-- Daily API-call ledger -------------------------------------------------------
+-- OpenDART meters per calendar day per key (20,000/day at time of writing) and
+-- locks the account out on overrun, so the budget is per-day state that has to
+-- survive process restarts — an in-memory counter would reset on every re-run
+-- and walk straight past the cap.
+CREATE TABLE IF NOT EXISTS api_call_budget (
+    source    TEXT NOT NULL,
+    call_date TEXT NOT NULL,             -- YYYY-MM-DD, local calendar day
+    calls     INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (source, call_date)
+);
+
 -- Cross-market comparison views (local + USD in one place) --------------------
 -- Latest price per security with USD conversion via the NEAREST-PRIOR fx_rate
 -- (so holidays / small range gaps still resolve).

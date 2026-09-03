@@ -495,3 +495,103 @@ class Repository:
             (today_iso(), status, rows, error, run_id),
         )
         self.commit()
+
+    def known_rcept_nos(self, table: str, company_id: int, source: str) -> set[str]:
+        """접수번호 already stored for this company, so a re-run does not re-open
+        documents it has already parsed. DART filings are immutable once accepted
+        (corrections arrive under a new 접수번호), so a stored one is final."""
+        if table not in ("kr_stake_changes", "kr_treasury_disposals"):
+            raise ValueError(f"{table} is not keyed by rcept_no")
+        rows = self._exec(
+            f"SELECT DISTINCT rcept_no FROM {table} WHERE company_id=? AND source=?",
+            (company_id, source),
+        ).fetchall()
+        return {r["rcept_no"] for r in rows}
+
+    # ------------------------------------------------------- scan cursor
+    # A market-wide sweep is resumable: each symbol's outcome is written as it
+    # finishes so an interrupted run (quota, network, Ctrl-C) restarts from the
+    # first unfinished symbol instead of re-fetching everything already stored.
+    def scan_scope(self, market: str, data_type: str, source: str,
+                   start: str | None, end: str | None) -> tuple[str, str, str, str, str]:
+        """The key prefix identifying one sweep. The date range is part of it:
+        a symbol finished for 2025 is not finished for a 2026 sweep."""
+        return (market, data_type, source, start or "", end or "")
+
+    def scan_done_symbols(self, market: str, data_type: str, source: str,
+                          start: str | None, end: str | None) -> set[str]:
+        """Symbols already completed for this scope. Errors are NOT included —
+        a symbol that failed should be retried on the next run, not skipped."""
+        rows = self._exec(
+            "SELECT symbol FROM scan_progress WHERE market=? AND data_type=? AND source=? "
+            "AND range_start=? AND range_end=? AND status='done'",
+            self.scan_scope(market, data_type, source, start, end),
+        ).fetchall()
+        return {r["symbol"] for r in rows}
+
+    def mark_scan_symbol(self, market: str, data_type: str, source: str,
+                         start: str | None, end: str | None, symbol: str,
+                         status: str, rows: int = 0, api_calls: int = 0,
+                         error: str | None = None) -> None:
+        self._exec(
+            "INSERT INTO scan_progress(market, data_type, source, range_start, range_end, "
+            "symbol, status, rows_written, api_calls, error, updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(market, data_type, source, range_start, range_end, symbol) "
+            "DO UPDATE SET status=excluded.status, rows_written=excluded.rows_written, "
+            "api_calls=excluded.api_calls, error=excluded.error, updated_at=excluded.updated_at",
+            (*self.scan_scope(market, data_type, source, start, end), symbol, status,
+             rows, api_calls, error, today_iso()),
+        )
+        self.commit()
+
+    def clear_scan_progress(self, market: str, data_type: str, source: str,
+                            start: str | None, end: str | None) -> int:
+        """Forget one scope's cursor so the next run starts from the top."""
+        cur = self._exec(
+            "DELETE FROM scan_progress WHERE market=? AND data_type=? AND source=? "
+            "AND range_start=? AND range_end=?",
+            self.scan_scope(market, data_type, source, start, end),
+        )
+        self.commit()
+        return cur.rowcount or 0
+
+    def scan_summary(self, market: str, data_type: str, source: str,
+                     start: str | None, end: str | None) -> dict[str, int]:
+        rows = self._exec(
+            "SELECT status, COUNT(*) AS n, SUM(rows_written) AS rows_written, "
+            "SUM(api_calls) AS api_calls FROM scan_progress "
+            "WHERE market=? AND data_type=? AND source=? AND range_start=? AND range_end=? "
+            "GROUP BY status",
+            self.scan_scope(market, data_type, source, start, end),
+        ).fetchall()
+        out = {"done": 0, "error": 0, "rows_written": 0, "api_calls": 0}
+        for r in rows:
+            out[r["status"]] = r["n"]
+            out["rows_written"] += r["rows_written"] or 0
+            out["api_calls"] += r["api_calls"] or 0
+        return out
+
+    # ---------------------------------------------------- API call budget
+    # OpenDART meters per calendar day per key and locks the account out on
+    # overrun, so the count has to outlive the process: an in-memory counter
+    # resets on every re-run and walks straight past the cap.
+    def api_calls_today(self, source: str, day: str | None = None) -> int:
+        row = self._exec(
+            "SELECT calls FROM api_call_budget WHERE source=? AND call_date=?",
+            (source, day or today_iso()),
+        ).fetchone()
+        return int(row["calls"]) if row else 0
+
+    def record_api_calls(self, source: str, n: int, day: str | None = None) -> int:
+        """Add `n` to today's tally and return the new total."""
+        if n <= 0:
+            return self.api_calls_today(source, day)
+        day = day or today_iso()
+        self._exec(
+            "INSERT INTO api_call_budget(source, call_date, calls) VALUES (?,?,?) "
+            "ON CONFLICT(source, call_date) DO UPDATE SET calls = calls + excluded.calls",
+            (source, day, n),
+        )
+        self.commit()
+        return self.api_calls_today(source, day)

@@ -13,7 +13,7 @@ from ..http.client import HttpClient
 from ..logging import get_logger
 from ..models import Filing, FinancialFact, SecurityRecord
 from ..utils.dates import default_range, to_iso
-from .base import BaseCollector, NotSupportedError
+from .base import BaseCollector, CallBudget, NotSupportedError
 
 log = get_logger(__name__)
 
@@ -60,6 +60,22 @@ class DartCollector(BaseCollector):
         # OpenDartReader has no 원문 accessor, so raw document.xml calls go through
         # the project's rate-limited client rather than bare requests.
         self.client = HttpClient(rate_limit=settings.default_rate_limit)
+        # Calls made by this collector instance. The rate limiter caps calls per
+        # second; this counts them per day, which is the limit DART actually
+        # enforces. `budget` is installed by the orchestrator when a sweep is
+        # running; left None, the collector counts but never blocks.
+        self.api_calls = 0
+        self.budget: CallBudget | None = None
+        # 접수번호 already parsed and stored. Populated by the orchestrator per
+        # symbol; empty by default, so a standalone collector still fetches
+        # everything and nothing silently disappears from a one-off call.
+        self.seen_rcept_nos: set[str] = set()
+
+    def _spend(self, n: int = 1) -> None:
+        """Charge `n` API calls, refusing to start one the budget cannot cover."""
+        if self.budget is not None:
+            self.budget.spend(n)      # raises QuotaExceededError when exhausted
+        self.api_calls += n
 
     # --------------------------------------------------------------- master
     def fetch_master(self, symbols: list[str] | None = None) -> list[SecurityRecord]:
@@ -151,6 +167,7 @@ class DartCollector(BaseCollector):
                 f"Unknown DART filing kind {kind!r}; expected one of "
                 + ", ".join(f"{k} ({v})" for k, v in _FILING_KINDS.items())
             )
+        self._spend()   # the listing itself is one metered call
         try:
             df = self.dart.list(symbol, start=start, end=end, kind=kind, final=True)
         except Exception as exc:  # noqa: BLE001
@@ -182,6 +199,7 @@ class DartCollector(BaseCollector):
         """Fetch and decode one filing's 원문 (document.xml returns a ZIP)."""
         from ..kr_disclosure_parse import unzip_document
 
+        self._spend()
         try:
             resp = self.client.get(
                 _DOC_API, params={"crtfc_key": self.api_key, "rcept_no": rcept_no}
@@ -197,7 +215,10 @@ class DartCollector(BaseCollector):
         Two calls per filing: the D listing, then each document's 원문. Only the
         대량보유 reports are opened — 임원·주요주주 reports dominate a D listing by
         count and carry no 변동명세, so opening them would multiply the request
-        count for nothing.
+        count for nothing. A 접수번호 already in `seen_rcept_nos` is skipped for
+        the same reason: a DART filing is immutable once accepted (a correction
+        is filed under a new 접수번호), so re-opening one buys nothing and, on a
+        market-wide sweep, is the single largest avoidable source of calls.
         """
         from ..kr_disclosure_parse import parse_report_meta, parse_stake_changes
         from ..models import StakeChange
@@ -205,6 +226,8 @@ class DartCollector(BaseCollector):
         out: list[StakeChange] = []
         for filing in self.fetch_filings(symbol, start, end, kind="D"):
             if "대량보유" not in (filing.filing_type or ""):
+                continue
+            if filing.filing_id in self.seen_rcept_nos:
                 continue
             xml = self._document_xml(filing.filing_id)
             if not xml:
@@ -228,6 +251,8 @@ class DartCollector(BaseCollector):
         for filing in self.fetch_filings(symbol, start, end, kind="B"):
             name = filing.filing_type or ""
             if "자기주식" not in name:
+                continue
+            if filing.filing_id in self.seen_rcept_nos:
                 continue
             xml = self._document_xml(filing.filing_id)
             if not xml:
