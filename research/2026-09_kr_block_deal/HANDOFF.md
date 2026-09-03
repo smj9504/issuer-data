@@ -1,135 +1,196 @@
-# 인수인계 — 남은 한 항목
+# 인수인계 — 전 종목 스윕 실행 대기
 
-작성: 2026-09-03 · 갱신: 2026-09-03 (전체 시장 스캔 구현 완료)
+작성: 2026-09-03 · 갱신: 2026-09-04 (스윕 전 점검에서 데이터 유실 발견·수정)
 대상: 다른 세션에서 이어받을 사람
 전제: `research/2026-09_kr_block_deal/README.md`(설계·실측)를 먼저 읽을 것.
 
-현재 상태는 **동작하는 파이프라인**이다. `--type stake` / `--type treasury`로 수집되고,
-`v_kr_stake_sales` / `v_kr_stake_deals` / `v_kr_treasury_price_check` 뷰로 분류·집계·
-정합성 검증이 된다 (005930 실데이터 검증 완료). 전 종목 스캔도 재개·한도 대응까지
-구현·실측 완료다.
+## 한 줄 요약
 
-**남은 건 1건이고, 그건 코드로 고칠 수 없는 제도적 한계다.**
+파이프라인은 완성됐고 검증도 끝났다. **남은 건 전 종목 스윕을 실제로 돌리는 것뿐이고,
+그건 구현 문제가 아니라 예산 판단이다.** 코드로 고칠 수 없는 한계 1건은 아래 §3.
 
 ---
 
-## 1. 지분 변동 단가 — 고칠 수 없는 항목 (제도적 한계)
+## 0. 지금 물려받는 상태 (2026-09-04 기준 실측)
 
-### 결론부터: 코드로 해결할 수 없다. 시도하지 말 것.
+| 항목 | 값 |
+|---|---|
+| DB의 KR 종목 수 | **2개** (005930, 000660) — 마스터 미수집 |
+| `kr_stake_changes` | 189행 / 접수번호 5건 |
+| `kr_treasury_disposals` | 8행 |
+| `scan_progress` 커서 | 5행 (테스트 스윕 흔적) |
+| 오늘 쓴 DART 호출 | 11회 (`api_call_budget`) |
+| 테스트 | 222 passed, 6 skipped · ruff clean |
 
-D001(주식등의대량보유상황보고서) 원문의 변동명세에는 **거래 단가 필드가 존재하지
-않는다.** 파서 버그가 아니라 서식 자체에 없다.
+즉 **실데이터는 검증용 표본 수준**이다. 본 스윕은 아직 안 돌렸다.
 
-### 이미 확인한 것 (재조사 불필요)
-
-- `MDF_UNT_PRC` 등 단가 후보 ACODE: **0/14건** — 필드 자체가 없음
-- 단가/금액 계열 필드 전수 스캔 결과 14건에서 나온 건 3개뿐:
-  - `HLD_UNT_PRJ` / `HLD_UNT_PRG` — 보유주식의 **수량** 관련 (단가 아님)
-  - `PRH_AMT` — 8/14건에 존재하나 **취득자금 조달내역**(자기자금·차입금 구성)이다.
-    원문 문맥 확인: `차입금(I) 기타(J) 계(H+I+J) 삼성생명보험 ... 16,699,220,100`.
-    보고서 **전체 합계**라 개별 변동 행에 배분할 수 없고, 애초에 체결가가 아니다.
-
-즉 "다른 필드에 단가가 숨어 있나"는 **이미 답이 나왔다: 없다.**
-
-### 현재 채택한 대안 (그대로 두면 됨)
-
-- 지분 변동 가격은 `prices`의 당일 종가로 **근사**한다
-- 실제 체결가가 나오는 곳은 자기주식 처분(`SEL_OSTK_SPRC`)뿐이고,
-  `v_kr_treasury_price_check`가 이미 그 검증을 한다
-
-### 굳이 개선한다면 (선택, 난이도 높음)
-
-체결가를 정말 알아야 한다면 DART 밖에서 와야 한다:
-- 블록딜은 장외(`HLD_MTH` = `11`/`12`)로 신고되므로, 그 날짜의 **시간외 대량매매
-  체결 데이터**를 KRX에서 별도로 가져와 매칭하는 방법 (KRX 로그인 필요)
-- 다만 수량·일자만으로 특정 거래를 지분변동 행에 1:1 매칭하는 건 확정적이지 않다.
-  같은 날 여러 건이 체결되면 귀속이 모호해진다 → 근사임을 명시해야 함
-
-**권고: 이 항목은 "해결"이 아니라 "문서화된 한계"로 남기는 게 맞다.** 이미 README에
-기록되어 있다.
-
----
-
-## 2. 전체 시장 스캔 — ✅ 완료 (2026-09-03)
-
-`--symbols` 없이 돌리면 DB의 KR 전 종목을 순회한다. 중단·재개와 일일 한도 대응이
-들어갔고, 실호출로 검증했다. 설계 근거와 실측치는 **README의 "전체 시장 스캔" 절**에
-있다. 여기엔 이어받을 때 알아야 할 것만 적는다.
-
-### 사용법
+## 1. 바로 시작하려면
 
 ```bash
-# 전 종목, 예산 소진 시 그 자리에서 중단
-python -m issuer_data collect --market kr --type stake \
-    --start 2026-01-01 --end 2026-08-31 --max-api-calls 18000
+# 1) 종목 마스터 먼저 — 순회 대상이 securities 테이블에서 나온다
+python -m issuer_data collect --market kr --type master
 
-# 다음 날 이어서
+# 2) 스윕 (첫날)
 python -m issuer_data collect --market kr --type stake \
-    --start 2026-01-01 --end 2026-08-31 --max-api-calls 18000 --resume
+    --start 2026-01-01 --end 2026-12-31 --max-api-calls 18000
 
-# 진행률 + 오늘 쓴 호출 수
+# 3) 다음 날 이어서
+python -m issuer_data collect --market kr --type stake \
+    --start 2026-01-01 --end 2026-12-31 --max-api-calls 18000 --resume
+
+# 진행률 / 오늘 사용량
 python -m issuer_data status
+python -m issuer_data query --sql "SELECT status, COUNT(*) FROM scan_progress GROUP BY status"
 ```
 
-`--restart`는 해당 스코프의 커서만 지운다 (전역 삭제 아님).
+비용 추정: 종목당 평균 5.75회(대형주 8종목 실측, 표본이 대형주라 **상한값**),
+전 종목(≈2,600) 1년치 ≈22,000회 → OpenDART 일일 한도 20,000회 기준 **이틀**.
 
-### 실측 결과 (라이브 호출로 확인)
+**돌리기 전에 §2를 반드시 읽을 것.** 실행 순서가 결과를 바꾼다.
 
-- 종목당 평균 **5.75회** (대형주 8종목 × 8개월; 최소 2, 최대 14)
-- 전 종목(≈2,600) 1년치 추정 **≈22,000회 → 이틀치 예산**. 표본이 대형주라 상한값이다
-- 재실행 시 005930이 **14회 → 1회** (저장된 접수번호 13건 건너뜀), `--resume` 시 0회
-- 한도 도달 시 실행이 `quota` 상태로 기록되고 커서는 그대로 남는다 (`error` 아님)
+## 2. 스윕 전 반드시 알아야 할 것
 
-### 이어받을 때 주의할 점
+### 2.1 재수집은 싸다 — 22,000회는 한 번만 낸다
 
-1. **커서 키에 날짜 범위가 들어간다.** 2025년치를 끝낸 종목은 2026년 스윕에서
-   완료로 치지 않는다. 이걸 빼면 `--start`를 넓혔을 때 전 종목이 이미 완료로 보이고
-   아무것도 안 가져온다 (`test_cursor_is_scoped_to_the_date_range`가 고정).
-2. **실패한 종목은 `--resume`이 건너뛰지 않는다.** `done`만 건너뛴다. 일시적 오류를
-   영구 누락으로 만들지 않기 위해서다.
-3. **호출 예산은 DB에 있다.** 메모리 카운터로 바꾸면 재실행마다 0으로 돌아가 실제
-   한도를 지나친다 (`test_budget_survives_a_process_restart`가 고정).
-4. **예산 소진은 종목 실패로 기록하지 않는다.** 그 종목은 실행될 기회조차 없었으므로
-   `error`로 남기면 데이터에 대한 거짓말이 된다. 커서에서 아예 빠진다.
-5. **`--type master`를 먼저 돌려야 한다.** 순회 대상은 `securities` 테이블에서 온다.
-   ```bash
-   python -m issuer_data collect --market kr --type master
-   ```
+접수번호 단위로 중복 제거되므로:
 
-### 아직 안 한 것 (원하면)
+| 재실행 상황 | 비용 | 실측 |
+|---|---|---|
+| 같은 기간 재실행 | 종목당 **1회** (목록만) | ✅ |
+| 기간 확장 (8월→7~8월) | 목록 1 + **신규 원문만** | ✅ 005930이 4회 |
+| `--resume` | **0회** | ✅ |
 
-- **실제 전 종목 스윕은 아직 돌리지 않았다.** 8종목 표본으로 비용만 실측했다.
-  돌릴지 여부는 예산 판단의 문제지 구현의 문제가 아니다.
-- 여러 API 키 로테이션 (한도가 키당이므로 이론상 가능). 지금 비용 추정으로는
-  불필요해 보인다 — 전 종목 1년치가 이틀이면 끝난다.
+따라서 1년치를 한 번 채워두면 이후는 증분만 나간다. 매달 이어붙이는 운영이 가능하다.
 
----
+### 2.2 `--reparse`를 언제 써야 하는가 (중요)
 
-## 참고: 건드리면 안 되는 설계 결정
+접수번호 스킵은 **파서를 고친 뒤에는 독이 된다.** 저장된 행은 옛 파서의 *출력*이라,
+접수번호를 건너뛰면 잘못된 결과가 영구히 남는다. `--restart`는 스캔 커서만 지우므로
+이걸 못 푼다.
 
-다음 세션이 "개선"하려다 되돌리기 쉬운 지점들이다.
+```bash
+# 파서/스키마를 고친 뒤 기존 데이터를 다시 파싱해야 할 때만
+python -m issuer_data collect --market kr --type stake --symbols 000660 \
+    --start ... --end ... --reparse --restart
+```
+
+전액 재수집 비용이 드니 평소엔 쓰지 말 것.
+
+### 2.3 `--start/--end`는 접수일이지 변동일이 아니다
+
+한 보고서가 수년치 이력을 담을 수 있다. 실측: 2026-06~08만 요청했는데
+`20260805000440`이 2022-02-25부터를 담아 **185행 중 43행이 2026년 이전**이었다.
+
+중복은 아니므로 정합성 문제는 없다. 다만 **기간별 집계는 반드시 `change_date`로
+필터해야 하고, 수집 범위를 신뢰하면 안 된다.**
+
+```sql
+-- 맞는 방식
+SELECT ... FROM v_kr_stake_sales WHERE change_date BETWEEN '2026-01-01' AND '2026-12-31'
+```
+
+### 2.4 스윕 후 확인할 쿼리 2개
+
+**(a) 정정공시 중복** — 표본에서는 0건이었으나 전 종목에서 재확인할 것.
+0행이면 그대로 두면 된다 (dedup 뷰 불필요).
+
+```sql
+SELECT company_id, holder_name, change_date, method, shares_delta,
+       COUNT(DISTINCT rcept_no) n, GROUP_CONCAT(DISTINCT rcept_no)
+FROM kr_stake_changes
+GROUP BY company_id, holder_name, change_date, method, shares_delta
+HAVING n > 1;
+```
+
+**(b) 미지 `HLD_MTH` 코드** — 사전은 22건 표본 기반 16개라 불완전하다. 새 코드가
+나오면 `kr_disclosure_parse.py`의 `HLD_MTH`와 `v_kr_stake_sales`의 side/venue CASE에
+반영해야 한다 (미지 코드는 버려지지 않고 원값 보존되므로 유실은 없다).
+
+```sql
+SELECT method, method_label, COUNT(*) FROM kr_stake_changes
+WHERE method NOT IN ('01','02','11','12','33','59','69','75','86','90','96','97','98','99','104')
+GROUP BY method, method_label;
+```
+
+**현재 표본에서 이미 1건 나온다**: `method='-'`(공란)인 행이 있다 — 박정호,
+2024-03-27, -22,114주. 방법을 신고하지 않은 변동이다. 뷰의 폴백이 의도대로 동작해
+`shares_delta < 0`으로 `side=sell`을 주고 `venue`는 정직하게 `other`로 둔다. **이건
+버그가 아니라 설계된 동작이니 고치지 말 것** — 장내/장외를 모르는 걸 아는 척하면
+안 된다. 전 종목에서 이런 행의 비중이 커지면 그때 별도 처리를 검토하면 된다.
+
+## 3. 지분 변동 단가 — 고칠 수 없는 항목 (제도적 한계)
+
+### 결론: 코드로 해결할 수 없다. 재조사하지 말 것.
+
+D001 변동명세에는 **거래 단가 필드가 존재하지 않는다.** 파서 버그가 아니라 서식에 없다.
+
+이미 확인한 것:
+- 단가 후보 ACODE(`MDF_UNT_PRC` 등): **0/14건**
+- 단가/금액 계열 전수 스캔에서 나온 3개가 전부:
+  - `HLD_UNT_PRJ`/`HLD_UNT_PRG` — 보유주식 **수량** (단가 아님)
+  - `PRH_AMT` — 8/14건 존재하나 **취득자금 조달내역**(자기자금·차입금). 원문 문맥
+    확인: `차입금(I) 기타(J) 계(H+I+J) 삼성생명보험 ... 16,699,220,100`. 보고서
+    **전체 합계**라 개별 행에 배분 불가, 애초에 체결가가 아님
+
+**대안(현행 유지):** 지분 변동 가격은 `prices` 당일 종가로 근사. 실제 체결가는 자기주식
+처분(`SEL_OSTK_SPRC`)에서만 나오고 `v_kr_treasury_price_check`가 이미 검증한다.
+
+굳이 개선한다면 KRX 시간외 대량매매 체결 데이터를 별도로 받아 매칭하는 방법이 있으나,
+같은 날 여러 건이면 귀속이 모호해 근사에 그친다. **문서화된 한계로 두는 게 맞다.**
+
+## 4. 건드리면 안 되는 설계 결정
+
+"정리"처럼 보이지만 되돌리면 문제가 되는 것들. 각각 고정 테스트가 있다.
 
 1. **파서는 FI/대주주를 판정하지 않는다.** 분류는 `v_kr_stake_sales`의 `holder_bucket`
-   CASE 문에만 있다. 파서에 판정을 넣으면 기준이 바뀔 때마다 전량 재수집해야 한다.
+   CASE 문에만 있다. 파서에 넣으면 기준이 바뀔 때마다 전량 재수집이다.
 2. **관계 코드는 변동 행이 아니라 별도 특별관계자 명부에 있다.** 사업자번호로 조인해야
    하며, 변동 행에서 직접 읽으면 분류 필드가 조용히 전부 NULL이 된다
-   (`test_change_rows_are_joined_to_roster_codes`가 고정).
-3. **미지 `HLD_MTH` 코드는 버리지 않고 원값 보존한다.** 현재 사전은 22건 표본 기반
-   16개이고 완전하지 않다.
-4. **가격 조인은 (company, date)당 1건으로 접어야 한다.** krx·yfinance가 같은 날
-   종가를 둘 다 갖고 있어 조인이 갈라지면 집계가 부풀려진다
-   (`test_price_check_view_does_not_fan_out_across_price_sources`가 고정).
-5. **`fetch_stake_changes`는 `"대량보유"`가 아닌 D 목록 항목의 원문을 열지 않는다.**
+   (`test_change_rows_are_joined_to_roster_codes`).
+3. **`stock_kind`는 PK에 있어야 한다.** 같은 보고자·같은 날·같은 방법이라도 보통주와
+   기타주식은 별개 변동이다. 빼면 한쪽이 덮어써져 조용히 사라진다 — 실제로
+   `20260805000440`에서 64행 중 4행(191,684주 포함)이 유실됐었다
+   (`test_same_holder_same_day_different_stock_kind_are_distinct_rows`).
+4. **PK 컬럼은 NULL이 아니라 `''`를 쓴다** (`holder_id`, `stock_kind`). SQLite에서
+   NULL은 서로 같지 않아 dedup이 조용히 깨진다
+   (`test_stock_kind_is_never_null_so_dedup_still_works`).
+5. **미지 `HLD_MTH` 코드는 버리지 않고 원값 보존한다.**
+6. **가격 조인은 (company, date)당 1건으로 접어야 한다.** krx·yfinance가 같은 날 종가를
+   둘 다 갖고 있어 조인이 갈라지면 집계가 부풀려진다
+   (`test_price_check_view_does_not_fan_out_across_price_sources`).
+7. **`fetch_stake_changes`는 `"대량보유"`가 아닌 D 목록 항목의 원문을 열지 않는다.**
    임원·주요주주 보고서가 D 목록의 대다수라 이 필터가 호출량 대부분을 걸러낸다.
    전 종목 스캔이 예상보다 싼 이유가 이것이다.
+8. **커서 키에 날짜 범위가 들어간다.** 2025년치를 끝낸 종목은 2026년 스윕에서 완료로
+   치지 않는다 (`test_cursor_is_scoped_to_the_date_range`).
+9. **호출 예산은 DB에 있다.** 메모리 카운터로 바꾸면 재실행마다 0으로 돌아가 실제
+   한도를 지나친다 (`test_budget_survives_a_process_restart`).
+10. **예산 소진은 종목 실패로 기록하지 않는다.** 실행 기회조차 없었으므로 `error`로
+    남기면 데이터에 대한 거짓말이 된다. 커서에서 아예 빠진다.
 
-## 관련 파일
+## 5. 스키마 마이그레이션 동작 (알아둘 것)
 
-- `src/issuer_data/kr_disclosure_parse.py` — 원문 파서
+`connect()`가 열 때마다 스키마를 자동 적용한다. 세 층이 있다:
+
+- **없는 테이블/뷰** → 스키마 스크립트 재적용으로 생성
+- **없는 컬럼** → `_ADDED_COLUMNS`의 `ALTER TABLE ADD COLUMN`
+- **바뀐 PK** → `_REKEYED`에 등록된 테이블을 재생성 (SQLite는 PK 변경 불가)
+
+PK 재생성은 기존 행을 옮겨오지만 **옛 키로 이미 덮어써진 데이터는 복구하지 못한다.**
+경고를 로그로 남기며, 복구하려면 해당 기간을 `--reparse`로 재수집해야 한다.
+
+새 컬럼/PK를 바꿀 때는 이 두 리스트에 등록할 것. 등록을 잊으면 다른 사람의 기존 DB에서만
+깨지고 fresh clone에서는 멀쩡해서 재현이 어렵다.
+
+## 6. 관련 파일
+
+- `src/issuer_data/kr_disclosure_parse.py` — 원문 파서 (코드 사전 포함)
 - `src/issuer_data/collectors/kr_dart.py` — `fetch_stake_changes` / `fetch_treasury_disposals`,
-  호출 과금(`_spend`)과 접수번호 건너뛰기
+  호출 과금(`_spend`), 접수번호 스킵
 - `src/issuer_data/collectors/base.py` — `CallBudget` / `QuotaExceededError`
-- `src/issuer_data/orchestrator.py` — `collect_coverage`의 재개·예산 루프
-- `src/issuer_data/storage/schema.sql` — 테이블 4개(+`scan_progress`, `api_call_budget`) + 뷰 3개
-- `tests/test_kr_disclosure_parse.py` — 파서 회귀 테스트 15건
-- `tests/test_market_scan_resume.py` — 재개·예산·접수번호 회귀 테스트 20건
+- `src/issuer_data/orchestrator.py` — `collect_coverage`의 재개·예산·`reparse` 루프
+- `src/issuer_data/storage/db.py` — 3층 마이그레이션
+- `src/issuer_data/storage/schema.sql` — 테이블 4개 + 뷰 3개
+- `tests/test_kr_disclosure_parse.py` — 파서·뷰 회귀 14건
+- `tests/test_market_scan_resume.py` — 재개·예산 회귀 20건
+- `tests/test_db_migration.py` — 마이그레이션 회귀 8건
