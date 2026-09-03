@@ -1,0 +1,177 @@
+{
+  "00325": {
+    "investors": [
+      {"name": "Greenwoods (HK Greenwoods)", "amount_usd_million": 20.0},
+      {"name": "UBS AM Singapore", "amount_usd_million": 20.0},
+      {"name": "Fullgoal Fund", "amount_usd_million": 7.0},
+      {"name": "Fullgoal HK", "amount_usd_million": 3.0}
+    ]
+  },
+  "00805": {
+    "investors": []
+  },
+  "01333": {
+    "investors": [
+      {"name": "HK Xinwei (Hongkong Xinwei Electronic Co., Limited)", "amount_hkd_million": 38.5},
+      {"name": "Changfeng Fund (Changfeng Growth Equity Fund OFC)", "amount_hkd_million": 25.0}
+    ]
+  },
+  "01364": {
+    "investors": [
+      {"name": "Huang River Investment Limited (Tencent)", "amount_usd_million": 25.0},
+      {"name": "LVC (Golden Valley Global Limited + Golden Valley Value Select Master Fund)", "amount_usd_million": 15.0},
+      {"name": "GM Charm Yield (BVI) Limited", "amount_usd_million": 15.0},
+      {"name": "Duckling Fund, L.P.", "amount_usd_million": 8.0},
+      {"name": "Long-Z Fund I, LP", "amount_usd_million": 8.0}
+    ]
+  },
+  "02097": {
+    "investors": [
+      {"name": "M&G Investments", "amount_usd_million": 60.0},
+      {"name": "HongShan Growth", "amount_usd_million": 60.0},
+      {"name": "Persistence Growth Limited (Boyu Capital)", "amount_usd_million": 40.0},
+      {"name": "HHLR Fund, L.P.", "amount_usd_million": 30.0},
+      {"name": "Long-Z Fund I, LP", "amount_usd_million": 10.0}
+    ]
+  },
+  "02530": {
+    "investors": []
+  },
+  "02560": {
+    "investors": [
+      {"name": "Anhui Shengchang Chemical Co., Ltd.", "amount_rmb_million": 70.0},
+      {"name": "Shenzhen Gaodeng Computer Technology Co., Ltd.", "amount_rmb_million": 60.0},
+      {"name": "Wuhu Artec Biotechnology Co., Ltd.", "amount_rmb_million": 53.0},
+      {"name": "Gotion High-tech Co., Ltd.", "amount_rmb_million": 52.6},
+      {"name": "SCGC Capital Holding Company Limited (Shenzhen Capital Group)", "amount_rmb_million": 46.2},
+      {"name": "Guangdong Zongxing Technology Co., Ltd", "amount_rmb_million": 20.0}
+    ]
+  },
+  "02561": {
+    "investors": [
+      {"name": "AnkeBio (Hong Kong) Co., Limited", "amount_usd": 30000000},
+      {"name": "Suzhou Harvest International Co., Limited", "amount_usd": 18000000},
+      {"name": "Vivo Capital", "amount_usd": 10000000},
+      {"name": "WuXi Biologics HealthCare Venture", "amount_usd": 10000000},
+      {"name": "Reynold Lemkins Group (Asia) Limited", "amount_usd": 4000000}
+    ]
+  },
+  "02571": {
+    "investors": [
+      {"name": "China Mobile International Holdings Limited", "amount_hkd_million": 148.5}
+    ]
+  },
+  "02589": {
+    "investors": [
+      {"name": "Infore Holding (Hong Kong) Limited", "amount_usd": 6440425},
+      {"name": "Sino Top Trading Limited (Huabao)", "amount_usd": 2775118}
+    ]
+  },
+  "02596": {
+    "investors": []
+  },
+  "02610": {
+    "investors": [
+      {"name": "Hongkong Topway Trading Co., Limited (Xiamen Xiangyu)", "amount_hkd_million": 388.57},
+      {"name": "Glencore International AG", "amount_hkd_million": 388.39},
+      {"name": "Reijong International Industrial Equipment (HK) Limited", "amount_hkd_million": 80.0},
+      {"name": "PT Indika Energy Tbk. (via PT Perkasa Investama Mineral)", "amount_hkd_million": 77.67}
+    ]
+  },
+  "02613": {
+    "investors": [
+      {"name": "Harvest International Premium Value (Secondary Market) Fund SPC (Harvest Oriental SP)", "amount_usd_million": 10.0}
+    ]
+  },
+  "02625": {
+    "investors": [
+      {"name": "Infore Holding (Hong Kong) Limited", "amount_usd": 6440425},
+      {"name": "Sino Top Trading Limited (Huabao)", "amount_usd": 2775118}
+    ]
+  },
+  "02629": {
+    "investors": [
+      {"name": "Beijing Xunrui Enterprise Management Partnership (Limited Partnership)", "amount_usd": 50000000},
+      {"name": "Evergreen Gate Limited (Fosun)", "amount_usd": 7920126}
+    ]
+  },
+  "02865": {
+    "investors": [
+      {"name": "Modern Direct Investment New Energy Technology Co., Limited", "amount_hkd_million": 386.97},
+      {"name": "Zhuhai Gokin New Energy Investment Co., Ltd", "amount_hkd_million": 106.12}
+    ]
+  },
+  "03677": {
+    "investors": [
+      {"name": "Southeast Investment Holding (Changshu)", "amount_usd_million": 38.8},
+      {"name": "Suzhou High-end Equipment Fund", "amount_usd_million": 27.6},
+      {"name": "Jiangsu Mixed Ownership Reform Fund", "amount_usd_million": 13.5}
+    ]
+  },
+  "03750": {
+    "investors": [
+      {"name": "Sinopec (Hong Kong) Limited", "amount_usd_million": 500.0},
+      {"name": "Kuwait Investment Authority (KIA)", "amount_usd_million": 500.0},
+      {"name": "HHLR CF, L.P. (Hillhouse)", "amount_usd_million": 200.0},
+      {"name": "Zenith Hop International Limited (Orchid Asia)", "amount_usd_million": 110.0},
+      {"name": "Shanghai Gaoyi / CICC Financial Trading Limited (Gaoyi OTC Swaps)", "amount_usd_million": 120.0},
+      {"name": "Abstract Enigma Limited (Boyu Capital)", "amount_usd_million": 100.0},
+      {"name": "Pinpoint Asset Management Limited", "amount_usd_million": 100.0},
+      {"name": "UBS AM Singapore", "amount_usd_million": 100.0},
+      {"name": "WT Asset Management Limited", "amount_usd_million": 100.0},
+      {"name": "Perseverance Asset Management International (Singapore) Pte. Ltd.", "amount_usd_million": 80.0},
+      {"name": "CPE Redwood Investment Limited", "amount_usd_million": 80.0},
+      {"name": "Oaktree Capital Management, L.P.", "amount_usd_million": 75.0},
+      {"name": "MX Bright Charm (BVI) Limited", "amount_usd_million": 70.0},
+      {"name": "Mirae Investors (Mirae Asset Securities + Mirae Asset Global Investments)", "amount_usd_million": 60.0},
+      {"name": "RBC Global Asset Management (Asia) Limited", "amount_usd_million": 53.0},
+      {"name": "CPIC Investors (Pacific Asset Management + CPIC HK)", "amount_usd_million": 50.0},
+      {"name": "LMR Multi-Strategy Master Fund Limited", "amount_usd_million": 50.0},
+      {"name": "LUOYANG Sci-Tech Inv.", "amount_usd_million": 50.0},
+      {"name": "PSBC Wealth Management Co., Ltd.", "amount_usd_million": 50.0},
+      {"name": "Taikang Life Insurance Co., Ltd", "amount_usd_million": 50.0},
+      {"name": "Shanghai Greenwoods / CICC Financial Trading Limited (Greenwoods OTC Swaps)", "amount_usd_million": 50.0},
+      {"name": "HK Greenwoods (Greenwoods Asset Management Hong Kong Limited)", "amount_usd_million": 50.0},
+      {"name": "Lingotto Innovation Master Fund", "amount_usd_million": 30.0}
+    ]
+  },
+  "06681": {
+    "investors": [
+      {"name": "Suzhou Ceyuan Fuhai Enterprise Management Partnership (Limited Partnership)", "amount_usd": 29500000},
+      {"name": "Tasly (International) Healthcare Investment & Development Company Limited", "amount_usd": 10000000},
+      {"name": "Tasly (Hong Kong) Pharmaceutical Investment Limited", "amount_usd": 5000000},
+      {"name": "Mr. Huang Guangwei", "amount_usd": 4000000}
+    ]
+  },
+  "06831": {
+    "investors": [
+      {"name": "Wuxi Zixian Food Co., Ltd. (Shanghai Ziyan)", "amount_usd": 35000000},
+      {"name": "Anji Liangshan Rural Revitalization Equity Investment Partnership", "amount_usd": 13000000},
+      {"name": "Action Chain International Limited", "amount_usd": 13000000},
+      {"name": "Chia Tai Food Investment Company Limited (Charoen Pokphand)", "amount_usd": 7089547},
+      {"name": "Sino Top Trading Limited (Huabao)", "amount_usd": 6240494},
+      {"name": "Wuxi Hexiang Food Co., Ltd.", "amount_usd": 5000000},
+      {"name": "Wuxi Lvlian Food Co., Ltd.", "amount_usd": 5000000},
+      {"name": "Wuxi Qinyu Food Co., Ltd.", "amount_usd": 3000000}
+    ]
+  },
+  "09606": {
+    "investors": [
+      {"name": "TruMed (TruMed Healthcare Master Fund + ABS Direct Equity Fund LLC Asia Series 11 + TruMed Health Innovation Fund LP)", "amount_usd_million": 10.0},
+      {"name": "E Fund Management Co., Ltd.", "amount_usd_million": 7.4},
+      {"name": "CUAM (China Universal Asset Management)", "amount_usd_million": 6.0},
+      {"name": "Fullgoal HK (Fullgoal Asset Management)", "amount_usd_million": 5.2},
+      {"name": "BioNTech SE", "amount_usd_million": 5.0},
+      {"name": "LAV Star Opportunities Limited", "amount_usd_million": 5.0},
+      {"name": "Panjing Harbourview Investment Fund", "amount_usd_million": 5.0},
+      {"name": "MY Asian Opportunities Master Fund, L.P.", "amount_usd_million": 5.0},
+      {"name": "Fullgoal Fund Management Co., Ltd.", "amount_usd_million": 4.8},
+      {"name": "Lake Bleu Prime Healthcare Master Fund Limited", "amount_usd_million": 3.2},
+      {"name": "EMHCP (Emerging Markets Healthcare Partners LLC)", "amount_usd_million": 2.5},
+      {"name": "Suzhou Suchuang Biomedical Health Venture Capital Fund Partnership", "amount_usd_million": 2.0},
+      {"name": "Lake Bleu Innovation Healthcare Master Fund Limited", "amount_usd_million": 1.8},
+      {"name": "WWHCP (Worldwide Healthcare Partners LLC)", "amount_usd_million": 1.5},
+      {"name": "E Fund HK (E Fund Management Hong Kong)", "amount_usd_million": 0.6}
+    ]
+  }
+}
