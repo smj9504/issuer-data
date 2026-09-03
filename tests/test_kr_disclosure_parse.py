@@ -170,3 +170,39 @@ def test_deal_view_rolls_up_by_receipt_and_side():
         " ORDER BY side, venue").fetchall()
     assert ("sell", "off_market", 1, 1000000.0) in deals
     assert ("buy", "on_market", 1, 249.0) in deals
+
+
+def test_price_check_view_does_not_fan_out_across_price_sources():
+    """One disposal must stay one row even when several sources price that day.
+
+    krx and yfinance both carry a close for the same KR trading day, so a naive
+    join emitted one disposal row per source and would inflate any count taken
+    over this view.
+    """
+    import pathlib
+
+    sql = pathlib.Path("src/issuer_data/storage/schema.sql").read_text(encoding="utf-8")
+    conn = sqlite3.connect(":memory:")
+    conn.executescript(sql)
+    conn.execute("INSERT INTO companies(company_id, name, source) VALUES (1,'t','dart')")
+    conn.execute(
+        "INSERT INTO securities(security_id, company_id, market, symbol, source)"
+        " VALUES (1,1,'KR','005930','dart')"
+    )
+    for src, close in (("krx", 254500.0), ("yfinance", 254500.0)):
+        conn.execute(
+            "INSERT INTO prices(security_id, trade_date, close, source)"
+            " VALUES (1,'2026-07-11',?,?)", (close, src)
+        )
+    conn.execute(
+        "INSERT INTO kr_treasury_disposals(company_id, rcept_no, report_date,"
+        " report_kind, shares, unit_price, total_amount, source)"
+        " VALUES (1,'rc1','2026-07-13','처분결정',1132477,285000,322755945000,'dart')"
+    )
+    conn.commit()
+
+    rows = conn.execute("SELECT premium_pct, amount_residual"
+                        " FROM v_kr_treasury_price_check").fetchall()
+    assert len(rows) == 1, f"disposal fanned out to {len(rows)} rows"
+    assert rows[0][0] == pytest.approx(11.98, abs=0.01)
+    assert rows[0][1] == 0          # shares * unit_price reconciles to the total

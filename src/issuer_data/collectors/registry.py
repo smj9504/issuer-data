@@ -46,7 +46,9 @@ for _m in MARKETS:
     DEFAULTS[(_m, "news")] = "fmp"
     DEFAULTS[(_m, "esg")] = "fmp"
 DEFAULTS[("US", "insiders")] = "edgar"
-DEFAULTS[("US", "demand")] = "edgar"  # no order-book disclosure elsewhere; US-only
+DEFAULTS[("US", "demand")] = "edgar"
+DEFAULTS[("KR", "stake")] = "dart"      # 원문 변동명세 is DART-only
+DEFAULTS[("KR", "treasury")] = "dart"  # no order-book disclosure elsewhere; US-only
 DEFAULTS[("US", "institutional")] = "fmp"
 DEFAULTS[("US", "index")] = "fmp"
 DEFAULTS[("US", "ownership")] = "edgar"   # SC 13D/13G cover-page parsing (best-effort)

@@ -1,7 +1,7 @@
 # 대주주·FI 지분 매각 추적 (DART 원문 파싱)
 
 **Date:** 2026-09-03
-**Status:** 파서 구현 완료 (수집기 배선 전)
+**Status:** 구현 완료 (실데이터 검증됨)
 
 ## Question
 
@@ -114,6 +114,35 @@ SEL_PPS         임원 등 성과급 지급    처분 목적
 - **전체 시장 스캔**: DART는 회사별 조회가 기본이라 "전 종목 블록딜"은 종목 수 × API 호출이
   된다. 호출량·레이트리밋 고려 필요.
 
+## 사용법
+
+```bash
+# 지분 변동 명세 (D001 원문 파싱)
+python -m issuer_data collect --market kr --type stake --symbols 005930     --start 2026-08-01 --end 2026-08-31
+
+# 자기주식 취득/처분 (주요사항보고 B)
+python -m issuer_data collect --market kr --type treasury --symbols 005930     --start 2025-01-01 --end 2026-08-31
+
+# 분류 / 딜 집계 / 가격 정합성
+python -m issuer_data query --sql "SELECT * FROM v_kr_stake_sales"
+python -m issuer_data query --sql "SELECT * FROM v_kr_stake_deals"
+python -m issuer_data query --sql "SELECT * FROM v_kr_treasury_price_check"
+```
+
+FI/대주주 기준을 바꾸려면 `schema.sql`의 `v_kr_stake_sales`에 있는 `holder_bucket`
+CASE 문만 고치고 `init-db`를 다시 돌리면 된다 — 재수집 불필요.
+
+## 실데이터 검증 (005930)
+
+- `--type stake` 2026-08 → 변동 32행 (매도 18 / 매수 14), 전부 `controlling` 분류
+  (삼성생명보험은 `SPC_TP=K` 금융기관이지만 `FLT_CRP_RLT=10` 최대주주가 우선)
+- `--type treasury` 2025-01~2026-08 → 8건. `amount_residual`이 전 행 0 —
+  수량×단가가 신고 총액과 정확히 일치하므로 파싱이 맞다는 교차 검증이 된다
+- `premium_pct` 실측: 2026-07-13 처분단가 285,000원 vs 종가 254,500원 = **+11.98%**,
+  2026-03-18은 **-7.0%**. 자기주식 처분은 임직원 성과급 지급이 많아 시장가 대비
+  프리미엄/할인이 목적(`purpose`)에 따라 갈린다.
+
 ## Output
 
-미정 (구현 후 `output/`).
+없음 — 이 파이프라인 자체가 산출물. 특정 조사 결과가 필요하면 위 뷰를 쿼리해서
+`output/`에 저장한다.

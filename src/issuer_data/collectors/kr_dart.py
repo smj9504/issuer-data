@@ -9,6 +9,7 @@ from __future__ import annotations
 import datetime as _dt
 
 from ..config import Settings
+from ..http.client import HttpClient
 from ..logging import get_logger
 from ..models import Filing, FinancialFact, SecurityRecord
 from ..utils.dates import default_range, to_iso
@@ -20,6 +21,7 @@ log = get_logger(__name__)
 _REPRT = {"11011": "FY", "11014": "Q3", "11012": "H1", "11013": "Q1"}
 # statement code (sj_div) -> our statement_type
 _SJ = {"IS": "IS", "CIS": "IS", "BS": "BS", "CF": "CF"}
+_DOC_API = "https://opendart.fss.or.kr/api/document.xml"
 _DOC_URL = "https://opendart.fss.or.kr/api/document.xml?crtfc_key={key}&rcept_no={rcept}"
 _VIEW_URL = "https://dart.fss.or.kr/dsaf001/main.do?rcpNo={rcept}"
 
@@ -55,6 +57,9 @@ class DartCollector(BaseCollector):
         import OpenDartReader
 
         self.dart = OpenDartReader(self.api_key)
+        # OpenDartReader has no 원문 accessor, so raw document.xml calls go through
+        # the project's rate-limited client rather than bare requests.
+        self.client = HttpClient(rate_limit=settings.default_rate_limit)
 
     # --------------------------------------------------------------- master
     def fetch_master(self, symbols: list[str] | None = None) -> list[SecurityRecord]:
@@ -172,6 +177,73 @@ class DartCollector(BaseCollector):
         return out
 
 
+    # ------------------------------------------------- 원문 기반 지분 변동/자사주
+    def _document_xml(self, rcept_no: str) -> str | None:
+        """Fetch and decode one filing's 원문 (document.xml returns a ZIP)."""
+        from ..kr_disclosure_parse import unzip_document
+
+        try:
+            resp = self.client.get(
+                _DOC_API, params={"crtfc_key": self.api_key, "rcept_no": rcept_no}
+            )
+            return unzip_document(resp.content)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("DART 원문 fetch failed for %s: %s", rcept_no, exc)
+            return None
+
+    def fetch_stake_changes(self, symbol: str, start: str, end: str):
+        """변동 rows from every 주식등의대량보유상황보고서 (D001) in the range.
+
+        Two calls per filing: the D listing, then each document's 원문. Only the
+        대량보유 reports are opened — 임원·주요주주 reports dominate a D listing by
+        count and carry no 변동명세, so opening them would multiply the request
+        count for nothing.
+        """
+        from ..kr_disclosure_parse import parse_report_meta, parse_stake_changes
+        from ..models import StakeChange
+
+        out: list[StakeChange] = []
+        for filing in self.fetch_filings(symbol, start, end, kind="D"):
+            if "대량보유" not in (filing.filing_type or ""):
+                continue
+            xml = self._document_xml(filing.filing_id)
+            if not xml:
+                continue
+            report_type = parse_report_meta(xml).get("report_type")
+            for row in parse_stake_changes(xml):
+                if not row.get("change_date"):
+                    continue  # a 변동 line with no date cannot be placed in time
+                out.append(StakeChange(
+                    symbol=symbol, market="KR", source="dart",
+                    rcept_no=filing.filing_id, report_type=report_type, **row,
+                ))
+        return out
+
+    def fetch_treasury_disposals(self, symbol: str, start: str, end: str):
+        """자기주식 취득/처분 결정 and 결과보고서 (주요사항보고 B)."""
+        from ..kr_disclosure_parse import parse_treasury_disposal
+        from ..models import TreasuryDisposal
+
+        out: list[TreasuryDisposal] = []
+        for filing in self.fetch_filings(symbol, start, end, kind="B"):
+            name = filing.filing_type or ""
+            if "자기주식" not in name:
+                continue
+            xml = self._document_xml(filing.filing_id)
+            if not xml:
+                continue
+            fields = parse_treasury_disposal(xml)
+            if not any(v is not None for v in fields.values()):
+                continue
+            out.append(TreasuryDisposal(
+                symbol=symbol, market="KR", source="dart",
+                rcept_no=filing.filing_id,
+                report_date=filing.filed_date or "",
+                report_kind=_treasury_kind(name),
+                **fields,
+            ))
+        return out
+
     # --------------------------------------------------- Extension B coverage
     def fetch_ownership(self, symbol: str):
         """대량보유 상황보고 (5%+ major-shareholder disclosures, majorstock.json)."""
@@ -275,3 +347,18 @@ def _parse_amount(v) -> float | None:
         return float(s)
     except ValueError:
         return None
+
+
+def _treasury_kind(report_name: str) -> str:
+    """Bucket a 주요사항보고 title into 처분결정 / 취득결정 / 결과보고서.
+
+    The decision and the result are separate filings; keeping them apart is what
+    lets a decided price be compared against what was actually executed.
+    """
+    if "결과보고서" in report_name:
+        return "결과보고서"
+    if "처분결정" in report_name:
+        return "처분결정"
+    if "취득결정" in report_name:
+        return "취득결정"
+    return report_name.strip() or "기타"

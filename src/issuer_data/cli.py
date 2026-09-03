@@ -16,7 +16,8 @@ log = get_logger(__name__)
 
 MARKET_CHOICES = ["kr", "hk", "us", "all"]
 COVERAGE_TYPES = ["metrics", "ratios", "ownership", "institutional", "actions",
-                  "analyst", "insiders", "earnings", "news", "index", "esg", "demand"]
+                  "analyst", "insiders", "earnings", "news", "index", "esg", "demand",
+                  "stake", "treasury"]
 TYPE_CHOICES = ["master", "prices", "financials", "filings", "fx", "peers", "lei",
                 *COVERAGE_TYPES, "all"]
 SOURCE_CHOICES = ["krx", "dart", "hkexnews", "edgar", "yfinance", "fmp", "alphavantage"]

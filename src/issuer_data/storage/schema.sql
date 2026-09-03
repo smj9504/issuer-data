@@ -593,10 +593,14 @@ SELECT
          THEN ROUND(t.shares * t.unit_price - t.total_amount, 0)
     END AS amount_residual
 FROM kr_treasury_disposals t
+-- One close per (company, date): the same day is often present from several
+-- sources (krx and yfinance both), and joining them all would emit a duplicate
+-- disposal row per source and silently inflate any count over this view.
 LEFT JOIN (
-    SELECT s.company_id, p.trade_date, p.close
+    SELECT s.company_id, p.trade_date, MIN(p.close) AS close
     FROM prices p JOIN securities s ON s.security_id = p.security_id
     WHERE s.market = 'KR'
+    GROUP BY s.company_id, p.trade_date
 ) mkt
   ON mkt.company_id = t.company_id
  AND mkt.trade_date = (

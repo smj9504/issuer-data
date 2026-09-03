@@ -202,6 +202,9 @@ class Orchestrator:
         "index": ("fetch_index_membership", "index_membership", "company", False),
         "esg": ("fetch_esg", "esg_scores", "company", False),
         "demand": ("fetch_demand_signals", "demand_signals", "company", False),
+        # DART 원문 기반 (KR only): 지분 변동 명세와 자기주식 처분/취득
+        "stake": ("fetch_stake_changes", "kr_stake_changes", "company", True),
+        "treasury": ("fetch_treasury_disposals", "kr_treasury_disposals", "company", True),
     }
 
     def collect_coverage(self, market: str, data_type: str, source: str | None,

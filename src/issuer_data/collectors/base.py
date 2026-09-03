@@ -83,3 +83,9 @@ class BaseCollector(ABC):
 
     def fetch_demand_signals(self, symbol: str):
         raise NotSupportedError(f"{self.source} does not provide demand signals")
+
+    def fetch_stake_changes(self, symbol: str, start: str, end: str):
+        raise NotSupportedError(f"{self.source} does not provide stake-change detail")
+
+    def fetch_treasury_disposals(self, symbol: str, start: str, end: str):
+        raise NotSupportedError(f"{self.source} does not provide treasury disposals")
