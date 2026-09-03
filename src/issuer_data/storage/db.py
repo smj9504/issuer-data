@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from importlib import resources
 from pathlib import Path
@@ -63,10 +64,11 @@ def connect(db_path: str | Path | None = None, *, ensure_schema: bool = True
         try:
             created = _apply_missing_tables(conn)
             added = _add_missing_columns(conn)
+            rekeyed = _rebuild_changed_keys(conn)
             conn.commit()
-            if created or added:
+            if created or added or rekeyed:
                 log.info("Schema brought up to date: %s",
-                         ", ".join(created + added))
+                         ", ".join(created + added + rekeyed))
         except sqlite3.Error as exc:
             # Never make opening a database fatal over a migration; the caller
             # may only be reading, and init-db remains the explicit repair.
@@ -116,3 +118,57 @@ def init_db(db_path: str | Path | None = None) -> Path:
         log.info("Migrated existing database: added %s", ", ".join(added))
     log.info("Initialized database at %s", db_path)
     return db_path
+
+
+# Tables whose PRIMARY KEY changed after release, with the column whose absence
+# from the old key silently dropped rows.
+_REKEYED: tuple[tuple[str, str], ...] = (
+    ("kr_stake_changes", "stock_kind"),
+)
+
+
+def _rebuild_changed_keys(conn: sqlite3.Connection) -> list[str]:
+    """Rebuild tables whose PRIMARY KEY widened since they were created.
+
+    SQLite cannot alter a primary key, and CREATE TABLE IF NOT EXISTS will not
+    touch an existing table, so a key fix reaches old databases only by rebuild.
+    Leaving it undone is not cosmetic: the narrower key made two genuinely
+    different 변동 lines collide, so one was silently overwritten and its
+    quantity lost.
+
+    The rebuild carries existing rows over, but it cannot recover what the old key
+    already overwrote: that data never reached the table. Those receipts also will
+    not be re-fetched on the next run, because collection skips 접수번호 it has
+    already stored. Recovering them needs a re-run with --restart over the affected
+    period, which the warning below says out loud rather than leaving the table
+    quietly short.
+    """
+    rebuilt: list[str] = []
+    for table, key_col in _REKEYED:
+        row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)
+        ).fetchone()
+        if not row or not row[0]:
+            continue
+        ddl = row[0]
+        pk = re.search(r"PRIMARY KEY\s*\(([^)]*)\)", ddl, re.DOTALL)
+        if not pk or key_col in pk.group(1):
+            continue  # already on the current key
+        cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]
+        collist = ", ".join(cols)
+        conn.execute(f"ALTER TABLE {table} RENAME TO {table}__old")
+        conn.executescript(_read_schema())
+        # DISTINCT because the old key let near-duplicates through; the new key
+        # would otherwise reject the copy outright.
+        conn.execute(
+            f"INSERT OR IGNORE INTO {table} ({collist}) SELECT DISTINCT {collist} "
+            f"FROM {table}__old"
+        )
+        conn.execute(f"DROP TABLE {table}__old")
+        rebuilt.append(f"{table} (re-keyed on {key_col})")
+        log.warning(
+            "%s was rebuilt on a wider primary key. Rows overwritten under the old "
+            "key are NOT recoverable from the database; re-run collection for the "
+            "affected period to restore them.", table
+        )
+    return rebuilt

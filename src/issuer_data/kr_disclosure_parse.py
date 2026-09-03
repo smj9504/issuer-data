@@ -169,7 +169,9 @@ def parse_stake_changes(xml: str) -> list[dict]:
             "relation_label": attrs.get("relation_label"),
             "method": method_code or None,
             "method_label": method_label or HLD_MTH.get(method_code),
-            "stock_kind": (tu.get("STK_KND") or ("", ""))[0] or None,
+            # '' not None: stock_kind is part of the storage primary key, where a
+            # NULL would stop two rows from ever colliding and defeat dedup.
+            "stock_kind": (tu.get("STK_KND") or ("", ""))[0] or "",
             "change_date": _iso_date((tu.get("MDF_DT") or ("", ""))[0])
                            or _iso_date(te.get("MDF_DT")),
             "shares_before": _num(te.get("BFR_MDF_CNT")),

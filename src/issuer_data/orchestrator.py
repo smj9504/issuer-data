@@ -213,7 +213,8 @@ class Orchestrator:
 
     def collect_coverage(self, market: str, data_type: str, source: str | None,
                          symbols: list[str] | None, start: str | None, end: str | None,
-                         resume: bool = False, max_api_calls: int | None = None) -> int:
+                         resume: bool = False, max_api_calls: int | None = None,
+                         reparse: bool = False) -> int:
         """Collect one coverage type across `symbols`, or the whole market.
 
         With no `symbols` this sweeps every stored security in the market. That
@@ -262,9 +263,15 @@ class Orchestrator:
             for sym in syms:
                 before_calls = getattr(collector, "api_calls", 0)
                 if rcept_table is not None and hasattr(collector, "seen_rcept_nos"):
+                    # `reparse` re-opens documents already stored. Needed after a
+                    # parser or key fix: the stored rows are the *output* of the old
+                    # code, and skipping their 접수번호 would keep the bad output
+                    # forever. Costs a full re-fetch, so it is opt-in.
                     cid = self.repo.get_company_id_for_symbol(market, sym)
                     collector.seen_rcept_nos = (
-                        self.repo.known_rcept_nos(rcept_table, cid, src) if cid else set()
+                        set() if reparse
+                        else (self.repo.known_rcept_nos(rcept_table, cid, src)
+                              if cid else set())
                     )
                 try:
                     items = method(sym, start2, end2) if dated else method(sym)

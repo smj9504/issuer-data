@@ -294,12 +294,19 @@ CREATE TABLE IF NOT EXISTS kr_stake_changes (
     relation_label    TEXT,
     method            TEXT,               -- HLD_MTH code (01/02/11/12/...)
     method_label      TEXT,               -- e.g. '장내매도(-)'
-    stock_kind        TEXT,               -- STK_KND code
+    stock_kind        TEXT NOT NULL DEFAULT '',  -- STK_KND code. '' not NULL: it is
+                                          -- part of the PK, and NULL <> NULL would
+                                          -- defeat dedup exactly as it would for holder_id
     shares_before     REAL,
     shares_delta      REAL,               -- signed
     report_type       TEXT,               -- RPT_DST1: 신규/변동/변경
     source            TEXT NOT NULL,
-    PRIMARY KEY (company_id, rcept_no, change_date, holder_name, holder_id, method, source)
+    -- stock_kind belongs in the key: one holder can move 의결권있는 주식 (11) and
+    -- 기타 (10, 우선주/신주인수권 etc.) on the same date by the same method, as two
+    -- separate 변동 lines. Without it the second silently overwrites the first and
+    -- the quantity vanishes — 4 of 64 rows on 20260805000440 did exactly that.
+    PRIMARY KEY (company_id, rcept_no, change_date, holder_name, holder_id, method,
+                 stock_kind, source)
 );
 CREATE INDEX IF NOT EXISTS idx_kr_stake_changes_date ON kr_stake_changes(change_date);
 CREATE INDEX IF NOT EXISTS idx_kr_stake_changes_holder ON kr_stake_changes(holder_id);

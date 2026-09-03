@@ -74,6 +74,7 @@ def cmd_collect(args) -> int:
                     total += orch.collect_coverage(
                         market, data_type, args.source, symbols, args.start, args.end,
                         resume=getattr(args, "resume", False),
+                        reparse=getattr(args, "reparse", False),
                         max_api_calls=getattr(args, "max_api_calls", None),
                     )
                     continue
@@ -519,6 +520,10 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--restart", action="store_true",
                    help="forget this scope's resume cursor before collecting, so the "
                         "sweep starts from the first symbol again")
+    c.add_argument("--reparse", action="store_true",
+                   help="re-open filings already stored instead of skipping them by "
+                        "접수번호. Needed after a parser or schema fix, since stored "
+                        "rows are the old parser's output; costs a full re-fetch")
     c.add_argument("--max-api-calls", type=int,
                    help="stop after this many API calls today (the count persists in "
                         "the database across runs). DART meters ~20,000/day per key "

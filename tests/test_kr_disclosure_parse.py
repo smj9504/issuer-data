@@ -206,3 +206,45 @@ def test_price_check_view_does_not_fan_out_across_price_sources():
     assert len(rows) == 1, f"disposal fanned out to {len(rows)} rows"
     assert rows[0][0] == pytest.approx(11.98, abs=0.01)
     assert rows[0][1] == 0          # shares * unit_price reconciles to the total
+
+
+def test_same_holder_same_day_different_stock_kind_are_distinct_rows():
+    """보통주와 기타 주식은 별개 변동이다 — 키가 좁으면 하나가 사라진다.
+
+    Real case: 20260805000440 filed 이석희's 임원퇴임 as two lines on 2022-03-30,
+    stock_kind 11 (의결권있는 주식, 11,236주) and 10 (기타, 191,684주). With
+    stock_kind outside the primary key the second overwrote the first and 191,684
+    shares vanished — 64 parsed rows became 60 stored.
+    """
+    xml = """<DOCUMENT><TABLE>
+<TR><TE ACODE="SPC_NM">이석희</TE><TE ACODE="SPC_ID2">650623</TE>
+<TU AUNIT="MDF_DT" AUNITVALUE="20220330">2022년 03월 30일</TU>
+<TU AUNIT="HLD_MTH" AUNITVALUE="97">임원퇴임(-)</TU>
+<TU AUNIT="STK_KND" AUNITVALUE="11">의결권있는 주식</TU>
+<TE ACODE="BFR_MDF_CNT">11,236</TE><TE ACODE="MDF_SDK_CNT">-11,236</TE></TR>
+<TR><TE ACODE="SPC_NM">이석희</TE><TE ACODE="SPC_ID2">650623</TE>
+<TU AUNIT="MDF_DT" AUNITVALUE="20220330">2022년 03월 30일</TU>
+<TU AUNIT="HLD_MTH" AUNITVALUE="97">임원퇴임(-)</TU>
+<TU AUNIT="STK_KND" AUNITVALUE="10">기타</TU>
+<TE ACODE="BFR_MDF_CNT">191,684</TE><TE ACODE="MDF_SDK_CNT">-191,684</TE></TR>
+</TABLE></DOCUMENT>"""
+    rows = parse_stake_changes(xml)
+    assert len(rows) == 2
+
+    conn = _view_db(rows)
+    stored = conn.execute(
+        "SELECT stock_kind, shares_delta FROM kr_stake_changes ORDER BY stock_kind"
+    ).fetchall()
+    assert stored == [("10", -191684.0), ("11", -11236.0)], "a 변동 line was overwritten"
+
+
+def test_stock_kind_is_never_null_so_dedup_still_works():
+    """stock_kind is in the primary key, where NULL <> NULL would defeat dedup."""
+    xml = """<DOCUMENT><TABLE>
+<TR><TE ACODE="SPC_NM">홍길동</TE><TE ACODE="SPC_ID2">700101</TE>
+<TU AUNIT="MDF_DT" AUNITVALUE="20260101">2026년 01월 01일</TU>
+<TU AUNIT="HLD_MTH" AUNITVALUE="02">장내매도(-)</TU>
+<TE ACODE="MDF_SDK_CNT">-100</TE></TR>
+</TABLE></DOCUMENT>"""
+    row = parse_stake_changes(xml)[0]
+    assert row["stock_kind"] == "", "absent STK_KND must be '' so the PK still collides"
