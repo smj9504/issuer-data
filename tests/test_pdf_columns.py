@@ -222,3 +222,162 @@ def test_a_tables_label_gap_is_not_a_column_gutter():
     from issuer_data.pdf_columns import column_aware_lines
 
     assert column_aware_lines(first_page(_financial_pdf())) is None
+
+
+# ----------------------------------------------------------- rotated text (90°)
+# Some filings render org-chart labels and table headers with a 90-degree-
+# rotated glyph matrix. pdfplumber's default bottom-to-top reading assumption
+# for rotated runs is backwards for these, so both a word's own characters and
+# the word order within a run come back mirror-reversed — confirmed against a
+# real prospectus, where "Placing:" extracted as ":gnicalP". insert_text(...,
+# rotate=90) reproduces the same matrix sign pattern pdfplumber reported on
+# that real document, so it is a faithful stand-in here.
+def _rotated_pdf(text: str, width: float = 200, height: float = 400) -> bytes:
+    doc = pymupdf.open()
+    page = doc.new_page(width=width, height=height)
+    page.insert_text((100, 350), text, fontname=FONT, fontsize=SIZE, rotate=90)
+    out = doc.tobytes()
+    doc.close()
+    return out
+
+
+def test_rotated_word_reads_correctly():
+    words = first_page(_rotated_pdf("OFFERING")).extract_words(
+        keep_blank_chars=False, char_dir_rotated="btt")
+    assert [w["text"] for w in words] == ["OFFERING"]
+
+
+def test_rotated_word_is_mirrored_without_the_fix():
+    """Documents the bug this guards against, so a pdfplumber upgrade that
+    changes the default is caught here rather than silently in production."""
+    words = first_page(_rotated_pdf("OFFERING")).extract_words(keep_blank_chars=False)
+    assert [w["text"] for w in words] == ["GNIREFFO"]
+
+
+def test_rotated_multi_word_run_reads_in_order():
+    words = first_page(_rotated_pdf("THE OFFER PRICE")).extract_words(
+        keep_blank_chars=False, char_dir_rotated="btt")
+    assert [w["text"] for w in words] == ["THE", "OFFER", "PRICE"]
+
+
+def test_rotated_table_cell_reads_correctly():
+    doc = pymupdf.open()
+    page = doc.new_page(width=400, height=300)
+    xs, ys = (40, 160, 280), (60, 150)      # a tall cell so "PLACING" fits vertically
+    for y in ys:
+        page.draw_line(pymupdf.Point(xs[0], y), pymupdf.Point(xs[-1], y))
+    for x in xs:
+        page.draw_line(pymupdf.Point(x, ys[0]), pymupdf.Point(x, ys[-1]))
+    page.insert_text((xs[0] + 14, ys[1] - 4), "PLACING", fontname=FONT,
+                     fontsize=SIZE, rotate=90)
+    content = doc.tobytes()
+    doc.close()
+
+    tables = first_page(content).find_tables()
+    assert tables
+    rows = tables[0].extract(char_dir_rotated="btt")
+    assert rows[0][0] == "PLACING"
+
+
+def test_upright_tables_unaffected_by_rotation_fix():
+    """char_dir_rotated="btt" must be a no-op for text that was never rotated."""
+    page = first_page(_financial_pdf())
+    default = page.extract_words(keep_blank_chars=False)
+    fixed = page.extract_words(keep_blank_chars=False, char_dir_rotated="btt")
+    assert default == fixed
+    assert find_column_tables(first_page(_financial_pdf())) == \
+        find_column_tables(first_page(_financial_pdf()))
+
+
+def test_extract_structured_reads_rotated_narrative_in_order():
+    from issuer_data.pdf_extract import extract_structured
+
+    doc = pymupdf.open()
+    page = doc.new_page(width=560, height=400)
+    page.insert_text((100, 350), "GLOBAL OFFERING", fontname=FONT,
+                     fontsize=SIZE, rotate=90)
+    page.insert_text((150, 60), "This announcement relates to the placing.",
+                     fontname=FONT, fontsize=SIZE)
+    content = doc.tobytes()
+    doc.close()
+
+    result = extract_structured(content)
+    assert "GLOBAL" in result.text and "OFFERING" in result.text
+    assert "GNIREFFO" not in result.text
+    assert "LABOLG" not in result.text
+
+
+# ---------------------------------------------- rotated table STRUCTURE (grid)
+# char_dir_rotated fixes reading order for a rotated run of text, but
+# find_column_tables' own row/column grouping (_group_rows/_split_cells)
+# still assumes top=row, x=column — backwards for a page whose glyph matrix
+# is itself rotated 90 degrees. A wide summary table (many columns) is
+# sometimes typeset sideways on a portrait page for exactly that reason: what
+# was one row of the original table becomes a fixed x0 here, walked in
+# reading order as top decreases. Confirmed against the same real prospectus
+# page as above (2024123100152.pdf, page 331) before writing this transform.
+def _rotated_column_pdf(rows: list[list[str]], width: float = 500,
+                        height: float = 500, col_gap: float = 100) -> bytes:
+    """Each inner list is one row of the ORIGINAL (unrotated) table, rendered
+    as a column of rotated text on the page — mirroring how the real filing
+    lays a wide table sideways onto a portrait page.
+
+    Each column sits at a FIXED offset along the rotated run, same as a real
+    table's ruled/whitespace-aligned columns: cell N always starts col_gap
+    past cell N-1's start, regardless of how long cell N-1's own text was.
+    An earlier version of this helper walked past each cell by that cell's
+    own rendered width, which only lines a grid up when every row's cells
+    happen to be the same length — not a property either a real filing or a
+    real test fixture should depend on.
+    """
+    doc = pymupdf.open()
+    page = doc.new_page(width=width, height=height)
+    row_x_positions = [60 + i * 70 for i in range(len(rows))]
+    for x, row in zip(row_x_positions, rows, strict=True):
+        for col_i, cell in enumerate(row):
+            y = height - 40 - col_i * col_gap
+            page.insert_text((x, y), cell, fontname=FONT, fontsize=SIZE, rotate=90)
+    out = doc.tobytes()
+    doc.close()
+    return out
+
+
+def test_rotated_wide_table_is_reconstructed_with_correct_cell_order():
+    original_rows = [
+        ["Investor", "Amount", "Shares", "Percent"],
+        ["Greenwoods", "20.00", "2792100", "12.86%"],
+        ["UBSAMSingapore", "20.00", "2679000", "12.34%"],
+        ["FullgoalFund", "7.00", "977100", "4.50%"],
+    ]
+    content = _rotated_column_pdf(original_rows)
+    tables = find_column_tables(first_page(content))
+    assert tables, "rotated table should be detected, not silently dropped"
+
+    got_rows = tables[0]["rows"]
+    # Header row is optional depending on _header_rows' look-back; the body
+    # (numeric data rows) is what must survive intact and in original order.
+    body = [r for r in got_rows if any(cell.replace(".", "").isdigit() for cell in r)]
+    assert [r[0] for r in body] == ["Greenwoods", "UBSAMSingapore", "FullgoalFund"]
+    assert body[0] == ["Greenwoods", "20.00", "2792100", "12.86%"]
+    assert body[2] == ["FullgoalFund", "7.00", "977100", "4.50%"]
+
+
+def test_rotated_table_bbox_and_col_x_are_in_page_coordinates():
+    """bbox/col_x must come back in the page's own (unrotated) coordinate
+    system — pdf_extract.py and downstream cross-page stitching compare these
+    against other tables' bbox/col_x, which are never in a rotated frame."""
+    content = _rotated_column_pdf([
+        ["Investor", "Amount", "Percent"],
+        ["Greenwoods", "20.00", "12.86%"],
+        ["UBSAMSingapore", "20.00", "12.34%"],
+        ["FullgoalFund", "7.00", "4.50%"],  # >= MIN_ROWS body rows required
+    ])
+    page = first_page(content)
+    tables = find_column_tables(page)
+    assert tables
+    bbox = tables[0]["bbox"]
+    # A page-coordinate bbox must fit within the page; a bbox still in the
+    # rotated frame would have swapped, often out-of-range, axes.
+    assert 0 <= bbox[0] <= bbox[2] <= page.width
+    assert 0 <= bbox[1] <= bbox[3] <= page.height
+    assert all(0 <= x <= page.width for x in tables[0]["col_x"])

@@ -43,9 +43,28 @@ def find_column_tables(page, *, min_rows: int = MIN_ROWS, min_cols: int = MIN_CO
                        x_tol: float = X_TOL,
                        numeric_rows_frac: float = NUMERIC_ROWS_FRAC) -> list[dict]:
     """Whitespace-aligned tables on `page`, in `_parse_pages`' table shape."""
-    words = page.extract_words(keep_blank_chars=False)
+    # char_dir_rotated="btt": some filings render text (org-chart labels, table
+    # headers) with a 90-degree-rotated glyph matrix. pdfplumber's default
+    # bottom-to-top-reading assumption for rotated runs is backwards for these,
+    # so both a word's own characters and the word order within a run come back
+    # mirror-reversed ("Placing:" as ":gnicalP"). "btt" is a no-op for upright
+    # text — confirmed byte-identical output on pages with no rotated text.
+    words = page.extract_words(keep_blank_chars=False, char_dir_rotated="btt")
     if len(words) < 10:
         return []
+
+    # A wide table (many columns) typeset on a portrait page is sometimes laid
+    # out sideways: the whole glyph matrix rotated 90 degrees, one physical
+    # ruling turned so what reads as a row of the original table becomes a
+    # fixed x0 on this page, walked top-to-bottom-turned-left-to-right. Reading
+    # order is already fixed by char_dir_rotated above, but _group_rows/
+    # _split_cells below assume top=row, x=column, which is backwards for
+    # these words — so their coordinates are rotated back into that frame
+    # first. bbox/col_x are rotated forward again before returning, so callers
+    # (pdf_extract.py) keep seeing this page's real coordinate system.
+    rotated = sum(1 for w in words if not w.get("upright", True)) > len(words) / 2
+    if rotated:
+        words = [_unrotate_word(w, page.height) for w in words]
 
     heights = [w["bottom"] - w["top"] for w in words]
     y_tol = max(1.5, statistics.median(heights) * 0.5)
@@ -74,17 +93,49 @@ def find_column_tables(page, *, min_rows: int = MIN_ROWS, min_cols: int = MIN_CO
         # cell fewer (no label column), and counting them would punish a table
         # that is in fact perfectly regular.
         modal = statistics.mode([len(r) for r in body])
+        bbox = (min(c[0] for r in table for c in r),
+                min(c[2] for r in table for c in r),
+                max(c[1] for r in table for c in r),
+                max(c[3] for r in table for c in r))
+        col_x = [c[0] for c in table[0]]
+        if rotated:
+            bbox = _rotate_bbox_forward(bbox, page.height)
+            col_x = [page.height - x for x in col_x]
         out.append({
-            "bbox": (min(c[0] for r in table for c in r),
-                     min(c[2] for r in table for c in r),
-                     max(c[1] for r in table for c in r),
-                     max(c[3] for r in table for c in r)),
-            "col_x": [c[0] for c in table[0]],
+            "bbox": bbox,
+            "col_x": col_x,
             "rows": [[c[4] for c in r] for r in table],
             "source_engine": "column-geometry",
             "structure_confidence": sum(1 for r in body if len(r) == modal) / len(body),
         })
     return out
+
+
+def _unrotate_word(w: dict, page_height: float) -> dict:
+    """Map a 90-degree-rotated word's box into (top=row, x=column) frame.
+
+    Derived and verified against a real prospectus page (HKEXnews filing
+    2024123100152.pdf, page 331): words sharing an x0 there are one row of
+    the original table, walked in reading order as top decreases — so
+    new_x = page_height - top preserves left-to-right order, and new_y = x0
+    groups a row under one y. Width/height swap along with the axes.
+    """
+    return {
+        **w,
+        "x0": page_height - w["bottom"],
+        "x1": page_height - w["top"],
+        "top": w["x0"],
+        "bottom": w["x1"],
+    }
+
+
+def _rotate_bbox_forward(bbox: tuple[float, float, float, float],
+                          page_height: float) -> tuple[float, float, float, float]:
+    """Inverse of _unrotate_word's transform, applied to a (x0, top, x1,
+    bottom) box, so a rotated table's bbox is reported in the page's own
+    (unrotated) coordinate system like every other table's."""
+    x0, top, x1, bottom = bbox
+    return (page_height - bottom, x0, page_height - top, x1)
 
 
 def _char_width(words: list[dict]) -> float:
@@ -203,7 +254,7 @@ def column_aware_lines(page) -> list[dict] | None:
     Returns None when the page is not in columns, which leaves single-column
     documents on pdfplumber's own line grouping, untouched.
     """
-    words = page.extract_words(keep_blank_chars=False)
+    words = page.extract_words(keep_blank_chars=False, char_dir_rotated="btt")
     if len(words) < _MIN_COLUMN_WORDS:
         return None
     heights = [w["bottom"] - w["top"] for w in words]

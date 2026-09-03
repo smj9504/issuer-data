@@ -379,7 +379,10 @@ def _parse_pages(pdf, fallback: str | None = "column-geometry",
                     log.debug("column bbox read failed: %s", exc)
                 rep["tables"].append({
                     "bbox": tuple(float(v) for v in tbl.bbox),
-                    "col_x": col_x, "rows": tbl.extract(),
+                    # 90-degree-rotated cell text (org-chart-style labels caught
+                    # inside a ruled table) reads backwards otherwise — see the
+                    # same char_dir_rotated note in pdf_columns.py.
+                    "col_x": col_x, "rows": tbl.extract(char_dir_rotated="btt"),
                 })
         except Exception as exc:  # noqa: BLE001
             log.debug("find_tables failed on p%s: %s", page.page_number, exc)
@@ -411,7 +414,7 @@ def _parse_pages(pdf, fallback: str | None = "column-geometry",
 
             lines = None if rep["tables"] else column_aware_lines(page)
             if lines is None:
-                lines = page.extract_text_lines(strip=True)
+                lines = page.extract_text_lines(strip=True, char_dir_rotated="btt")
             for ln in lines:
                 rep["lines"].append({
                     "text": ln.get("text", ""), "x0": ln.get("x0", 0.0),
