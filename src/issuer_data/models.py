@@ -238,6 +238,59 @@ class OwnershipRow(_SymBase):
     pct: float | None = None
 
 
+class StakeChange(_SymBase):
+    """One 변동 line from a 주식등의대량보유상황보고서 (DART 지분공시 D001).
+
+    Deliberately stores DART's own codes rather than a derived judgement. The
+    filer already declares the relationship (`FLT_CRP_RLT`: 최대주주 / 계열회사등
+    / 기타) and the counterparty type (`SPC_TP`: 금융기관 / 국내법인 / 개인), so
+    classifying a holder as "FI" or "대주주" is a query-time definition, not a
+    parse-time one: bake it in here and changing the definition means re-fetching
+    every document, and the evidence for the call is gone.
+
+    `method` is HLD_MTH (01=장내매수, 02=장내매도, 11=장외매수, 12=장외매도, ...);
+    unrecognised codes are kept verbatim rather than dropped, since the observed
+    dictionary is empirical and DART can add to it.
+
+    There is no unit-price field in the 변동명세 — confirmed absent across every
+    document sampled — so a stake change carries quantities only. Execution
+    prices come from the 자기주식처분 side, or from `prices` on the change date.
+    """
+
+    rcept_no: str                        # DART 접수번호 (deal-level key)
+    change_date: str                     # MDF_DT
+    holder_name: str                     # SPC_NM — 보고자/특별관계자
+    holder_id: str | None = None         # SPC_ID2 — 사업자등록번호/생년월일
+    holder_type: str | None = None       # SPC_TP code (K/I/D/...)
+    holder_type_label: str | None = None
+    relation: str | None = None          # FLT_CRP_RLT code (10/14/16/...)
+    relation_label: str | None = None
+    method: str | None = None            # HLD_MTH code
+    method_label: str | None = None      # e.g. '장내매도(-)'
+    stock_kind: str | None = None        # STK_KND code
+    shares_before: float | None = None   # BFR_MDF_CNT
+    shares_delta: float | None = None    # MDF_SDK_CNT (signed)
+    report_type: str | None = None       # RPT_DST1: 신규/변동/변경
+
+
+class TreasuryDisposal(_SymBase):
+    """자기주식 취득/처분 결정 or 결과 (DART 주요사항보고 B).
+
+    Unlike a stake change this does carry an execution price (`unit_price`,
+    SEL_OSTK_SPRC), which is what makes price-consistency checks possible at all.
+    """
+
+    rcept_no: str
+    report_date: str
+    report_kind: str                     # '처분결정' | '취득결정' | '결과보고서'
+    shares: float | None = None          # SEL_OSTK
+    unit_price: float | None = None      # SEL_OSTK_SPRC
+    total_amount: float | None = None    # SEL_OSTK_PRC
+    counterparty: str | None = None      # DSPS_PARN — 처분 상대방
+    purpose: str | None = None           # SEL_PPS
+    method: str | None = None
+
+
 class InstitutionalHolding(_SymBase):
     quarter: str
     manager: str
