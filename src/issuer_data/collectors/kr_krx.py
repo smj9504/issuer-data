@@ -6,6 +6,8 @@ with a DatetimeIndex and no adjusted close.
 
 from __future__ import annotations
 
+import sys
+
 from ..config import Settings
 from ..logging import get_logger
 from ..models import Price, SecurityRecord
@@ -13,6 +15,37 @@ from ..utils.dates import compact, default_range, to_iso
 from .base import BaseCollector, NotSupportedError
 
 log = get_logger(__name__)
+
+
+def _import_pykrx_stock():
+    """Import pykrx.stock, surviving the login it runs at import time.
+
+    pykrx builds its session in module scope (`webio.py`: `_session =
+    build_krx_session()`), reading KRX_ID/KRX_PW via `os.getenv` in that
+    function's *default arguments* — so merely importing pykrx attempts a login.
+    Every branch of it (missing creds, bad creds, and success alike) then
+    `print`s Korean text, which raises UnicodeEncodeError on a Windows console
+    still in a legacy code page, killing the import — and with it any script
+    that imports this module, even one that never touches KRX.
+
+    So: force the streams to UTF-8 first, and treat a failed import as "KRX
+    unavailable" rather than letting it take the process down.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except Exception as exc:  # noqa: BLE001
+                log.debug("could not switch %s to UTF-8: %s", stream, exc)
+    try:
+        from pykrx import stock  # imported here so the dep is only needed for KR
+    except Exception as exc:
+        raise NotSupportedError(
+            f"pykrx is unavailable ({type(exc).__name__}: {exc}). KRX login runs at "
+            "import time; check KRX_ID/KRX_PW or use --source yfinance for KR."
+        ) from exc
+    return stock
+
 
 # Major KR indices for current-membership checks (index code -> our label).
 _KR_INDICES = {"1028": "KOSPI200", "1035": "KRX100", "2203": "KOSDAQ150"}
@@ -33,9 +66,7 @@ class KrxCollector(BaseCollector):
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
-        from pykrx import stock  # imported here so the dep is only needed for KR
-
-        self.stock = stock
+        self.stock = _import_pykrx_stock()
 
     # --------------------------------------------------------------- master
     def fetch_master(self, symbols: list[str] | None = None) -> list[SecurityRecord]:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 
 from dotenv import load_dotenv
@@ -518,6 +519,13 @@ def main(argv: list[str] | None = None) -> int:
     # pykrx's KRX login reads KRX_ID/KRX_PW straight from os.environ, so load
     # .env into the real process environment too.
     load_dotenv()
+    # ...but an empty KRX_ID=/KRX_PW= (as shipped in .env.example) is worse than
+    # no variable at all: pykrx treats "set but blank" as a failed login instead
+    # of staying anonymous, and prints Korean text while failing. Drop blanks so
+    # the anonymous path is taken.
+    for var in ("KRX_ID", "KRX_PW"):
+        if not os.environ.get(var, "").strip():
+            os.environ.pop(var, None)
     parser = build_parser()
     args = parser.parse_args(argv)
     setup_logging("DEBUG" if getattr(args, "verbose", False) else None)
