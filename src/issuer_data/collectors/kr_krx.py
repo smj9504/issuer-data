@@ -75,31 +75,51 @@ class KrxCollector(BaseCollector):
     # --------------------------------------------------------------- prices
     def fetch_prices(self, symbol: str, start: str, end: str) -> list[Price]:
         start, end = default_range(start, end)
-        # adjusted=False (raw OHLC). pykrx's default adjusted=True path hits KRX's
-        # 수정주가 endpoint (adjStkPrc=2), which returns an empty frame in pykrx
-        # 1.2.8 — the collector silently got 0 rows. We store unadjusted OHLC and
-        # leave adj_close=None, so the raw series is both correct and reliable.
-        df = self.stock.get_market_ohlcv(compact(start), compact(end), symbol, adjusted=False)
-        if df is None or df.empty:
+        s, e = compact(start), compact(end)
+        # adjusted=True is the reliable path — verified live (2026-09-03) across
+        # KOSPI/KOSDAQ tickers and across a known 50:1 split (Samsung Electronics,
+        # 2018-05-04): pre-split closes came back already rescaled continuous with
+        # post-split ones, confirming this path genuinely divides out corporate
+        # actions rather than just relabeling raw prices.
+        #
+        # adjusted=False was previously assumed to be the reliable side (an older
+        # comment here claimed adjusted=True returned an empty frame in pykrx
+        # 1.2.8) but live-tested the opposite: adjusted=False now returns an empty
+        # (0, 0) frame — pykrx or KRX must have changed sides since that comment
+        # was written. Still attempted first (cheap, and would be the source of
+        # truth for raw OHLC if it starts working again) with adjusted=True as the
+        # fallback for the whole row when it comes back empty — meaning close and
+        # adj_close are then numerically identical for that row, which is honest:
+        # the unadjusted figure genuinely isn't available, not fabricated to look
+        # different from the adjusted one.
+        raw_df = self.stock.get_market_ohlcv(s, e, symbol, adjusted=False)
+        adj_df = self.stock.get_market_ohlcv(s, e, symbol, adjusted=True)
+        if adj_df is None or adj_df.empty:
             return []
-        df = df.rename(columns=_COLMAP)
+        adj_df = adj_df.rename(columns=_COLMAP)
+        raw_df = raw_df.rename(columns=_COLMAP) if raw_df is not None and not raw_df.empty else None
+
         out: list[Price] = []
-        for idx, row in df.iterrows():
+        for idx, adj_row in adj_df.iterrows():
             trade_date = to_iso(idx)
-            close = _num(row.get("close"))
-            if close is None:
+            adj_close = _num(adj_row.get("close"))
+            if adj_close is None:
                 continue
+            raw_row = raw_df.loc[idx] if raw_df is not None and idx in raw_df.index else adj_row
+            close = _num(raw_row.get("close"))
+            if close is None:
+                close = adj_close
             out.append(
                 Price(
                     symbol=symbol,
                     market="KR",
                     trade_date=trade_date,
-                    open=_num(row.get("open")),
-                    high=_num(row.get("high")),
-                    low=_num(row.get("low")),
+                    open=_num(raw_row.get("open")),
+                    high=_num(raw_row.get("high")),
+                    low=_num(raw_row.get("low")),
                     close=close,
-                    volume=_int(row.get("volume")),
-                    adj_close=None,
+                    volume=_int(raw_row.get("volume")),
+                    adj_close=adj_close,
                     currency="KRW",
                     source="krx",
                 )

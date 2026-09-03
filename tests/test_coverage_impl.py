@@ -176,3 +176,77 @@ def test_krx_index_membership():
 
     rows = c.fetch_index_membership("005930")
     assert [r.index_name for r in rows] == ["KOSPI200"]  # in KOSPI200 only
+
+
+def test_krx_prices_uses_adjusted_true_as_the_reliable_path():
+    """adjusted=True is the side that actually returns data (verified live,
+    2026-09-03, across KOSPI/KOSDAQ tickers and a real 50:1 split) — an earlier
+    version of this collector had it backwards and stored adj_close=None for
+    every row. adjusted=False is still attempted for the raw OHLC fields (it
+    may start working again), with adjusted=True's own row as fallback."""
+    c = _krx()
+
+    idx = pd.DatetimeIndex(["2025-01-02", "2025-01-03"])
+    raw_df = pd.DataFrame(
+        {"시가": [52700, 52800], "고가": [53600, 55100], "저가": [52300, 52800],
+         "종가": [53400, 54400], "거래량": [16630538, 19318046]}, index=idx)
+    adj_df = raw_df.copy()  # no corporate action in this window: adjusted == raw
+
+    def _ohlcv(start, end, ticker, adjusted):
+        return raw_df if not adjusted else adj_df
+    c.stock.get_market_ohlcv = _ohlcv
+
+    rows = c.fetch_prices("005930", "2025-01-02", "2025-01-03")
+    assert len(rows) == 2
+    assert rows[0].close == 53400.0
+    assert rows[0].adj_close == 53400.0
+    assert rows[0].open == 52700.0
+    assert rows[0].volume == 16630538
+
+
+def test_krx_prices_adj_close_diverges_from_close_across_a_split():
+    """Across a real corporate action, adj_close must differ from close —
+    otherwise the collector is silently passing through unadjusted figures
+    under the adjusted label. Values below are the actual pykrx response for
+    005930 on 2018-04-20, one week before its 2018-05-04 50:1 split."""
+    c = _krx()
+
+    idx = pd.DatetimeIndex(["2018-04-20"])
+    raw_df = pd.DataFrame(
+        {"시가": [2590000], "고가": [2613000], "저가": [2571000],
+         "종가": [2581000], "거래량": [128928]}, index=idx)
+    adj_df = pd.DataFrame(
+        {"시가": [51800], "고가": [52260], "저가": [51420],
+         "종가": [51620], "거래량": [128928]}, index=idx)
+
+    def _ohlcv(start, end, ticker, adjusted):
+        return raw_df if not adjusted else adj_df
+    c.stock.get_market_ohlcv = _ohlcv
+
+    rows = c.fetch_prices("005930", "2018-04-20", "2018-04-20")
+    assert len(rows) == 1
+    assert rows[0].close == 2581000.0
+    assert rows[0].adj_close == 51620.0
+    assert rows[0].close != rows[0].adj_close
+
+
+def test_krx_prices_falls_back_to_adjusted_row_when_raw_is_empty():
+    """Reproduces the currently-live failure mode: adjusted=False returns an
+    empty frame. The collector must still return rows (from adjusted=True),
+    with close falling back to the adjusted figure rather than the whole
+    fetch coming back empty."""
+    c = _krx()
+
+    idx = pd.DatetimeIndex(["2025-01-02"])
+    adj_df = pd.DataFrame(
+        {"시가": [52700], "고가": [53600], "저가": [52300],
+         "종가": [53400], "거래량": [16630538]}, index=idx)
+
+    def _ohlcv(start, end, ticker, adjusted):
+        return pd.DataFrame() if not adjusted else adj_df
+    c.stock.get_market_ohlcv = _ohlcv
+
+    rows = c.fetch_prices("005930", "2025-01-02", "2025-01-02")
+    assert len(rows) == 1
+    assert rows[0].close == 53400.0
+    assert rows[0].adj_close == 53400.0
