@@ -23,6 +23,23 @@ _SJ = {"IS": "IS", "CIS": "IS", "BS": "BS", "CF": "CF"}
 _DOC_URL = "https://opendart.fss.or.kr/api/document.xml?crtfc_key={key}&rcept_no={rcept}"
 _VIEW_URL = "https://dart.fss.or.kr/dsaf001/main.do?rcpNo={rcept}"
 
+# DART 공시유형. A has always been this collector's default; D (지분공시) carries
+# 주식등의대량보유상황보고서 and B (주요사항보고) carries 자기주식처분결정, neither of
+# which appears in an A listing at all.
+_FILING_KINDS = {
+    "A": "정기공시",
+    "B": "주요사항보고",
+    "C": "발행공시",
+    "D": "지분공시",
+    "E": "기타공시",
+    "F": "외부감사관련",
+    "G": "펀드공시",
+    "H": "자산유동화",
+    "I": "거래소공시",
+    "J": "공정위공시",
+}
+_DEFAULT_FILING_KIND = "A"
+
 
 class DartCollector(BaseCollector):
     market = "KR"
@@ -110,12 +127,29 @@ class DartCollector(BaseCollector):
         return out
 
     # --------------------------------------------------------------- filings
-    def fetch_filings(self, symbol: str, start: str, end: str) -> list[Filing]:
+    def fetch_filings(
+        self, symbol: str, start: str, end: str, kind: str | None = None
+    ) -> list[Filing]:
+        """DART filings for `symbol`.
+
+        `kind` is DART's 공시유형: A=정기공시, B=주요사항보고, C=발행공시,
+        D=지분공시, E=기타, F=외부감사, G=펀드, H=자산유동화, I=거래소,
+        J=공정위. It defaults to A, which is what this collector has always
+        returned — but 지분공시(D, e.g. 주식등의대량보유상황보고서) and
+        주요사항보고(B, e.g. 자기주식처분결정) are simply absent from an A
+        listing, so anything working on stake changes has to ask for them.
+        """
         start, end = default_range(start, end, default_years=2)
+        kind = (kind or _DEFAULT_FILING_KIND).upper()
+        if kind not in _FILING_KINDS:
+            raise ValueError(
+                f"Unknown DART filing kind {kind!r}; expected one of "
+                + ", ".join(f"{k} ({v})" for k, v in _FILING_KINDS.items())
+            )
         try:
-            df = self.dart.list(symbol, start=start, end=end, kind="A", final=True)
+            df = self.dart.list(symbol, start=start, end=end, kind=kind, final=True)
         except Exception as exc:  # noqa: BLE001
-            log.warning("DART list failed for %s: %s", symbol, exc)
+            log.warning("DART list failed for %s (kind=%s): %s", symbol, kind, exc)
             return []
         if df is None or getattr(df, "empty", True):
             return []

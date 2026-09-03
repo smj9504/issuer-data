@@ -66,6 +66,9 @@ python -m issuer_data collect --market hk --type filings --symbols 00700 --downl
 # Filter filings by type (comma-separated, case-insensitive substring match on filing_type)
 python -m issuer_data collect --market us --type filings --symbols AAPL --filing-type 8-K,10-K
 
+# DART 공시유형: 지분공시(D)에 주식등의대량보유상황보고서, 주요사항보고(B)에 자기주식처분결정
+python -m issuer_data collect --market kr --type filings --source dart --symbols 005930     --dart-kind D --filing-type 대량보유
+
 # FX (USDKRW/USDHKD) for currencies present in the DB, then compare across markets
 python -m issuer_data collect --market all --type fx --start 2024-06-01 --end 2024-07-10
 python -m issuer_data compare --symbols AAPL,005930,0700.HK

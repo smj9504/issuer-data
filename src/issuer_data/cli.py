@@ -81,6 +81,7 @@ def cmd_collect(args) -> int:
                     download_docs=args.download_docs,
                     filing_types=_split_csv(args.filing_type),
                     extract_tables=args.extract_tables,
+                    filing_kind=getattr(args, "dart_kind", None),
                 )
     finally:
         conn.close()
@@ -432,6 +433,10 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--limit", type=int, help="cap number of securities (smoke tests)")
     c.add_argument("--download-docs", action="store_true",
                    help="with --type filings: also download originals + extract text")
+    c.add_argument("--dart-kind", choices=list("ABCDEFGHIJ"),
+                   help="with --type filings on KR/DART: 공시유형 "
+                        "(A=정기, B=주요사항, C=발행, D=지분, E=기타, F=외부감사, "
+                        "G=펀드, H=자산유동화, I=거래소, J=공정위). Default A.")
     c.add_argument("--filing-type",
                    help="with --type filings: comma-separated filter, e.g. 8-K,10-K "
                         "(case-insensitive substring match against filing_type)")

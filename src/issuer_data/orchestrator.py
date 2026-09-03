@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import sqlite3
 
 from .collectors.base import NotSupportedError
@@ -64,6 +65,7 @@ class Orchestrator:
         download_docs: bool = False,
         filing_types: list[str] | None = None,
         extract_tables: bool = False,
+        filing_kind: str | None = None,
     ) -> int:
         market = market.upper()
         src = source or default_source(market, data_type)
@@ -84,7 +86,8 @@ class Orchestrator:
                 rows = self._collect_financials(collector, market, symbols)
             elif data_type == "filings":
                 rows = self._collect_filings(collector, market, symbols, start, end,
-                                             download_docs, filing_types, extract_tables)
+                                             download_docs, filing_types, extract_tables,
+                                             filing_kind)
             else:
                 raise ValueError(f"Unknown data_type {data_type}")
             self.repo.finish_run(run_id, "ok", rows)
@@ -150,7 +153,8 @@ class Orchestrator:
         return total
 
     def _collect_filings(self, collector, market, symbols, start, end, download_docs,
-                          filing_types: list[str] | None = None, extract_tables=False) -> int:
+                          filing_types: list[str] | None = None, extract_tables=False,
+                          filing_kind: str | None = None) -> int:
         start, end = default_range(start, end, default_years=2)
         symbols = self._resolve_symbols(market, symbols)
         self.ensure_master(market, symbols)
@@ -158,7 +162,7 @@ class Orchestrator:
         pending: list[tuple[int, list]] = []
         for sym in symbols:
             try:
-                filings = collector.fetch_filings(sym, start, end)
+                filings = _fetch_filings(collector, sym, start, end, filing_kind)
             except NotSupportedError:
                 raise
             except Exception as exc:  # noqa: BLE001
@@ -257,6 +261,23 @@ class Orchestrator:
 
 def _default_ccy(market: str) -> str:
     return {"KR": "KRW", "HK": "HKD", "US": "USD"}.get(market.upper(), "USD")
+
+
+def _fetch_filings(collector, symbol: str, start: str, end: str, filing_kind: str | None):
+    """Call fetch_filings, passing `kind` only to collectors that accept it.
+
+    `kind` is DART's 공시유형 and has no counterpart at EDGAR/HKEXnews/FMP, so it
+    stays off the shared BaseCollector signature; passing it blindly would break
+    every other source.
+    """
+    if not filing_kind:
+        return collector.fetch_filings(symbol, start, end)
+    params = inspect.signature(collector.fetch_filings).parameters
+    if "kind" not in params:
+        raise NotSupportedError(
+            f"{collector.source} has no filing-kind concept; --dart-kind applies to DART only"
+        )
+    return collector.fetch_filings(symbol, start, end, kind=filing_kind)
 
 
 def _filter_filing_types(filings: list[Filing], filing_types: list[str] | None) -> list[Filing]:
