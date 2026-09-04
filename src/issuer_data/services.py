@@ -85,8 +85,8 @@ def compute_period_average_fx(repo: Repository, settings: Settings) -> int:
         pend = r["period_end"] or f"{fy}-12-31"
         wstart = _window_start(pend, fp)
         row = conn.execute(
-            "SELECT AVG(rate) a FROM fx_rates WHERE base_ccy=? AND quote_ccy='USD' "
-            "AND rate_type='spot' AND rate_date BETWEEN ? AND ?",
+            "SELECT AVG(rate) a FROM fx_rates WHERE base_ccy=%s AND quote_ccy='USD' "
+            "AND rate_type='spot' AND rate_date BETWEEN %s AND %s",
             (ccy, wstart, pend),
         ).fetchone()
         if row and row["a"] is not None:
@@ -143,7 +143,7 @@ def collect_peers(repo: Repository, settings: Settings, market: str, symbols: li
     fmp._current_market = market
     if not symbols:
         rows = repo.conn.execute(
-            "SELECT symbol FROM securities WHERE market=?", (market,)
+            "SELECT symbol FROM securities WHERE market=%s", (market,)
         ).fetchall()
         symbols = [r["symbol"] for r in rows]
     total = 0
@@ -195,7 +195,7 @@ def compare_symbols(conn: psycopg.Connection, symbols: list[str]) -> None:
             rows.append({"symbol": symbol, "note": "not found"})
             continue
         lp = conn.execute(
-            "SELECT trade_date, close_local, close_usd FROM v_latest_price WHERE security_id=?",
+            "SELECT trade_date, close_local, close_usd FROM v_latest_price WHERE security_id=%s",
             (sec["security_id"],),
         ).fetchone()
         rev = _latest_metric(conn, sec["company_id"], ("Revenues", "revenue", "RevenueFromContractWithCustomerExcludingAssessedTax", "totalRevenue"))
@@ -235,23 +235,24 @@ def _find_security(conn, symbol, market):
     if market:
         return conn.execute(
             "SELECT s.*, c.name FROM securities s JOIN companies c USING(company_id) "
-            "WHERE s.market=? AND s.symbol=?", (market.upper(), symbol),
+            "WHERE s.market=%s AND s.symbol=%s", (market.upper(), symbol),
         ).fetchone()
     return conn.execute(
         "SELECT s.*, c.name FROM securities s JOIN companies c USING(company_id) "
-        "WHERE s.symbol=? ORDER BY s.is_primary DESC LIMIT 1", (symbol,),
+        "WHERE s.symbol=%s ORDER BY s.is_primary DESC LIMIT 1", (symbol,),
     ).fetchone()
 
 
 def _latest_metric(conn, company_id, accounts):
     # Honor the documented default: consolidated (CFS) annual (FY) figure only, so
     # compare never surfaces a quarterly or separate-scope number.
-    placeholders = ",".join("?" * len(accounts))
+    # = ANY over a list, rather than an IN-list built from a placeholder per
+    # account: one parameter, and no string-multiplication to get wrong.
     row = conn.execute(
-        f"SELECT value FROM financials WHERE company_id=? AND account IN ({placeholders}) "
+        "SELECT value FROM financials WHERE company_id=%s AND account = ANY(%s) "
         "AND value IS NOT NULL AND fiscal_period='FY' AND fs_scope='CFS' "
         "ORDER BY fiscal_year DESC LIMIT 1",
-        (company_id, *accounts),
+        (company_id, list(accounts)),
     ).fetchone()
     return row["value"] if row else None
 

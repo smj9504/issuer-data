@@ -280,6 +280,14 @@ class Orchestrator:
                     raise
                 except Exception as exc:  # noqa: BLE001
                     log.warning("%s %s:%s failed: %s", data_type, market, sym, exc)
+                    # Roll back before recording the failure. If what failed was
+                    # a statement rather than the network, the transaction is
+                    # poisoned and every later one raises until it is cleared --
+                    # including this symbol's cursor write and the next symbol's.
+                    # A sweep would keep running while silently recording
+                    # nothing, and the resume that follows would re-fetch
+                    # everything and spend the day's quota again.
+                    self.conn.rollback()
                     self._mark_symbol(market, data_type, src, start2, end2, sym, "error",
                                       0, getattr(collector, "api_calls", 0) - before_calls,
                                       str(exc), budget)
@@ -323,7 +331,7 @@ class Orchestrator:
         if symbols:
             return [normalize_symbol(market, s) for s in symbols]
         rows = self.conn.execute(
-            "SELECT symbol FROM securities WHERE market=? ORDER BY symbol", (market,)
+            "SELECT symbol FROM securities WHERE market=%s ORDER BY symbol", (market,)
         ).fetchall()
         return [r["symbol"] for r in rows]
 

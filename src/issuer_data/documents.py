@@ -454,7 +454,7 @@ def _parse_doc_urls(raw) -> list[str]:
 
 def _downloaded_seqs(conn, company_id, filing_id, source) -> set[int]:
     rows = conn.execute(
-        "SELECT doc_seq FROM filing_documents WHERE company_id=? AND filing_id=? AND source=?",
+        "SELECT doc_seq FROM filing_documents WHERE company_id=%s AND filing_id=%s AND source=%s",
         (company_id, filing_id, source),
     ).fetchall()
     return {r["doc_seq"] for r in rows}
@@ -469,17 +469,27 @@ def _pending_rows(conn, company_ids, markets, limit):
         "JOIN securities s ON s.company_id=f.company_id "
         "WHERE (SELECT COUNT(*) FROM filing_documents d WHERE d.company_id=f.company_id "
         "  AND d.filing_id=f.filing_id AND d.source=f.source) "
-        "  < MAX(1, COALESCE(json_array_length(f.doc_urls), 1))"
+        # GREATEST, not MAX: MAX is an aggregate here, not a two-argument
+        # scalar. doc_urls is TEXT holding JSON, so it needs the cast, and a
+        # value that will not parse counts as one document rather than
+        # aborting the query -- this predicate gates the whole backfill, and
+        # failing it silently would leave filings permanently unfetched.
+        "  < GREATEST(1, COALESCE("
+        "      CASE WHEN f.doc_urls IS NOT NULL AND f.doc_urls <> ''"
+        "                AND f.doc_urls ~ '^\\s*\\['"
+        "           THEN json_array_length(f.doc_urls::json) END, 1))"
     )
     params: list = []
+    # = ANY over a list rather than an IN-list assembled per element: one
+    # parameter each, and nothing to miscount.
     if company_ids:
-        sql += " AND f.company_id IN (%s)" % ",".join("?" * len(company_ids))
-        params += company_ids
+        sql += " AND f.company_id = ANY(%s)"
+        params.append(list(company_ids))
     if markets:
-        sql += " AND s.market IN (%s)" % ",".join("?" * len(markets))
-        params += markets
+        sql += " AND s.market = ANY(%s)"
+        params.append(list(markets))
     sql += " GROUP BY f.company_id, f.filing_id, f.source"
     if limit:
-        sql += " LIMIT ?"
+        sql += " LIMIT %s"
         params.append(limit)
     return conn.execute(sql, tuple(params)).fetchall()

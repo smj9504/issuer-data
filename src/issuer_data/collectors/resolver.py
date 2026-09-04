@@ -118,7 +118,7 @@ def apply_overrides(repo: Repository, overrides_path: str | Path) -> int:
             if sid is None:
                 continue
             repo._exec(
-                "UPDATE securities SET company_id=? WHERE security_id=?",
+                "UPDATE securities SET company_id=%s WHERE security_id=%s",
                 (target_cid, sid),
             )
             repo.link_identifier("TICKER", f"{market}:{symbol}", target_cid, "override")

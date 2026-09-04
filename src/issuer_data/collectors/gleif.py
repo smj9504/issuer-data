@@ -61,7 +61,7 @@ def enrich_leis(repo: Repository, settings: Settings, symbols: list[str] | None,
         lei = lookup_lei(client, row["name"], _COUNTRY.get(row["country"]))
         if not lei:
             continue
-        repo._exec("UPDATE companies SET lei=? WHERE company_id=?", (lei, row["company_id"]))
+        repo._exec("UPDATE companies SET lei=%s WHERE company_id=%s", (lei, row["company_id"]))
         repo.link_identifier("LEI", lei, row["company_id"], "gleif")
         n += 1
         log.info("LEI %s -> %s", row["name"], lei)

@@ -265,23 +265,26 @@ class StakeChange(_SymBase):
     holder_type_label: str | None = None
     relation: str | None = None          # FLT_CRP_RLT code (10/14/16/...)
     relation_label: str | None = None
-    method: str | None = None            # HLD_MTH code
+    method: str = ""                     # HLD_MTH code
     method_label: str | None = None      # e.g. '장내매도(-)'
     stock_kind: str = ""                 # STK_KND code
     shares_before: float | None = None   # BFR_MDF_CNT
     shares_delta: float | None = None    # MDF_SDK_CNT (signed)
     report_type: str | None = None       # RPT_DST1: 신규/변동/변경
 
-    @field_validator("holder_id", "stock_kind", mode="before")
+    @field_validator("holder_id", "stock_kind", "method", mode="before")
     @classmethod
     def _absent_is_empty_not_null(cls, v):
-        """Both columns sit in the primary key, where NULL defeats deduplication.
+        """These columns sit in the primary key, where NULL defeats dedup.
 
-        A missing 사업자등록번호 or 주식종류 has to arrive as '' rather than None:
-        NULL never equals NULL, so two filings identical but for an unreported
-        code would both insert instead of one replacing the other. Pinning it
-        here rather than in the column default keeps the guarantee independent
-        of what the database does with a NULL it was handed.
+        A missing 사업자등록번호, 주식종류 or 취득/처분 방법 has to arrive as ''
+        rather than None: NULL never equals NULL, so two filings identical but
+        for an unreported code would both insert instead of one replacing the
+        other. Pinning it here rather than in the column default keeps the
+        guarantee independent of what the database does with a NULL.
+
+        An unreported method is a real 변동, not a defect -- the view reads ''
+        as venue 'other' rather than guessing on- or off-market.
         """
         return "" if v is None else v
 

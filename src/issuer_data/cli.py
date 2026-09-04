@@ -204,7 +204,7 @@ def _link_symbols(repo, market_symbols: list[str]) -> int:
         sid = repo.get_security_id(m, s)
         if sid is None:
             continue
-        repo._exec("UPDATE securities SET company_id=? WHERE security_id=?", (target, sid))
+        repo._exec("UPDATE securities SET company_id=%s WHERE security_id=%s", (target, sid))
         repo.link_identifier("TICKER", f"{m}:{s}", target, "manual")
         linked += 1
     repo.commit()
@@ -370,7 +370,7 @@ def cmd_status(args) -> int:
         rows = conn.execute(
             "SELECT run_id, market, data_type, source, status, rows_written, "
             "started_at, finished_at, error FROM collection_runs "
-            "ORDER BY run_id DESC LIMIT ?", (args.limit or 20,)
+            "ORDER BY run_id DESC LIMIT %s", (args.limit or 20,)
         ).fetchall()
         if not rows:
             print("No collection runs yet.")

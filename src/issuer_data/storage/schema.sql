@@ -315,7 +315,12 @@ CREATE TABLE IF NOT EXISTS kr_stake_changes (
     holder_type_label TEXT,
     relation          TEXT,               -- FLT_CRP_RLT code
     relation_label    TEXT,
-    method            TEXT,               -- HLD_MTH code (01/02/11/12/...)
+    method            TEXT NOT NULL DEFAULT '',  -- HLD_MTH code (01/02/11/12/...).
+                                          -- '' not NULL, and for the same reason as
+                                          -- holder_id: it is in the PK, and a filing
+                                          -- that reports no 취득/처분 방법 is a real
+                                          -- 변동 that still has to dedup against itself
+                                          -- (the view reads '' as venue 'other')
     method_label      TEXT,               -- e.g. '장내매도(-)'
     stock_kind        TEXT NOT NULL DEFAULT '',  -- STK_KND code. '' not NULL: it is
                                           -- part of the PK, and NULL <> NULL would
