@@ -1,8 +1,14 @@
 # 인수인계 — 전 종목 스윕 실행 대기
 
-작성: 2026-09-03 · 갱신: 2026-09-04 (스윕 전 점검에서 데이터 유실 발견·수정)
+작성: 2026-09-03 · 갱신: 2026-09-04 (스윕 전 점검에서 데이터 유실 발견·수정,
+마스터 소스·종목 수 정정)
 대상: 다른 세션에서 이어받을 사람
 전제: `research/2026-09_kr_block_deal/README.md`(설계·실측)를 먼저 읽을 것.
+
+**다른 머신에서 시작한다면 먼저:** `.env`는 git에 없다(`.gitignore`). `.env.example`을
+복사해 최소 `ISSUER_DART_API_KEY`를 채워야 스윕이 돈다. `ISSUER_DB_PATH`가 가리키는
+SQLite 파일도 함께 옮기지 않으면 빈 DB에서 처음부터 시작한다 — 그래도 동작은 하지만
+이미 받은 5건을 다시 받는다. 환경 구축은 `HANDOFF_VENV.md` 참고.
 
 ## 한 줄 요약
 
@@ -28,7 +34,11 @@
 
 ```bash
 # 1) 종목 마스터 먼저 — 순회 대상이 securities 테이블에서 나온다
-python -m issuer_data collect --market kr --type master
+#    --source dart 를 붙일 것. KR master의 기본 소스는 yfinance인데(registry.py),
+#    yfinance에는 "시장 전 종목 열거"가 없어 명단이 안 채워진다. DART 소스는
+#    OpenDartReader가 하루 1회 받아 캐시하는 corp_codes(docs_cache/*.pkl)에서
+#    상장사 전체를 읽으므로 DART 호출 0회이고, corp_code·한글명까지 채운다.
+python -m issuer_data collect --market kr --type master --source dart
 
 # 2) 스윕 (첫날)
 python -m issuer_data collect --market kr --type stake \
@@ -44,7 +54,16 @@ python -m issuer_data query --sql "SELECT status, COUNT(*) FROM scan_progress GR
 ```
 
 비용 추정: 종목당 평균 5.75회(대형주 8종목 실측, 표본이 대형주라 **상한값**),
-전 종목(≈2,600) 1년치 ≈22,000회 → OpenDART 일일 한도 20,000회 기준 **이틀**.
+전 종목 1년치 → OpenDART 일일 한도 20,000회 기준 **이틀**.
+
+종목 수는 **3,988개**다 (2026-09-04, DART corp_codes 중 6자리 종목코드 보유 법인 실측).
+이 문서가 원래 쓴 ≈2,600은 과소치였다. 3,988 × 5.75 ≈ 22,900회 — 이틀인 것은 같지만
+둘째 날 여유가 거의 없다. 다만 5.75가 대형주 표본 상한이라 실제로는 더 낮을 여지가 있다
+(중소형주는 대량보유 공시가 적다).
+
+`corp_code`는 추가 호출을 만들지 않는다. `dart.list(symbol, ...)`이 내부에서
+`find_corp_code`를 부르지만 그건 캐시된 DataFrame 조회이고, 과금되는 호출은
+`fetch_filings`의 목록 1회와 `_document_xml`의 원문 1회뿐이다 (`_spend()` 호출 지점).
 
 **돌리기 전에 §2를 반드시 읽을 것.** 실행 순서가 결과를 바꾼다.
 
