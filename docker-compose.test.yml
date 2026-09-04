@@ -1,0 +1,38 @@
+# Postgres for the test suite only. Never point this at the collection database:
+# the suite applies the schema and truncates freely, and the real database holds
+# a sweep that costs two days of metered API calls to rebuild.
+#
+#   docker compose -f docker-compose.test.yml up -d
+#
+# The data directory is a tmpfs, so commits skip fsync and the database is thrown
+# away with the container. That is what keeps a suite this size close to the
+# in-memory database it replaces. Nothing here is durable by design.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: issuer
+      POSTGRES_PASSWORD: issuer
+      POSTGRES_DB: issuer_test
+      # The container initialises the cluster on first boot; C collation keeps
+      # ordering predictable regardless of the host's locale.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    # 55432, not 5432: a developer with a real Postgres already listening should
+    # not have this one silently take its place, or vice versa.
+    ports:
+      - "55432:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    command:
+      - postgres
+      - -c
+      - fsync=off
+      - -c
+      - full_page_writes=off
+      - -c
+      - synchronous_commit=off
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U issuer -d issuer_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
