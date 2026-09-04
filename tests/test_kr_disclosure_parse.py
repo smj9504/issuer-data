@@ -6,9 +6,8 @@ them off the change row itself silently produces NULL for exactly the fields the
 FI-vs-대주주 classification depends on. That regression is pinned below.
 """
 
-import sqlite3
-
 import pytest
+from conftest import new_db
 
 from issuer_data.kr_disclosure_parse import (
     HLD_MTH,
@@ -125,11 +124,7 @@ def test_method_dictionary_covers_the_trading_codes(code, label):
 
 def _view_db(rows):
     """Apply the shipped schema and load parsed rows, to exercise the views."""
-    import pathlib
-
-    sql = pathlib.Path("src/issuer_data/storage/schema.sql").read_text(encoding="utf-8")
-    conn = sqlite3.connect(":memory:")
-    conn.executescript(sql)
+    conn = new_db()
     conn.execute("INSERT INTO companies(company_id, name, source) VALUES (1,'t','dart')")
     for r in rows:
         conn.execute(
@@ -147,8 +142,8 @@ def _view_db(rows):
 
 def test_view_classifies_side_and_venue():
     conn = _view_db(parse_stake_changes(D001))
-    got = dict(conn.execute(
-        "SELECT method, side || '/' || venue FROM v_kr_stake_sales").fetchall())
+    got = {r["method"]: r["sv"] for r in conn.execute(
+        "SELECT method, side || '/' || venue AS sv FROM v_kr_stake_sales")}
     assert got["02"] == "sell/on_market"
     assert got["12"] == "sell/off_market"      # a block deal is off-market
     assert got["01"] == "buy/on_market"
@@ -157,17 +152,20 @@ def test_view_classifies_side_and_venue():
 def test_view_buckets_holders_from_dart_codes():
     """The FI-vs-대주주 call lives in the view, so it is testable without refetching."""
     conn = _view_db(parse_stake_changes(D001))
-    got = dict(conn.execute(
-        "SELECT DISTINCT holder_name, holder_bucket FROM v_kr_stake_sales").fetchall())
+    got = {r["holder_name"]: r["holder_bucket"] for r in conn.execute(
+        "SELECT DISTINCT holder_name, holder_bucket FROM v_kr_stake_sales")}
     assert got["삼성생명보험"] == "controlling"   # relation 10 wins over type K
     assert got["삼성복지재단"] == "other"
 
 
 def test_deal_view_rolls_up_by_receipt_and_side():
     conn = _view_db(parse_stake_changes(D001))
-    deals = conn.execute(
-        "SELECT side, venue, holders, shares_total FROM v_kr_stake_deals"
-        " ORDER BY side, venue").fetchall()
+    deals = [
+        (r["side"], r["venue"], r["holders"], r["shares_total"])
+        for r in conn.execute(
+            "SELECT side, venue, holders, shares_total FROM v_kr_stake_deals"
+            " ORDER BY side, venue")
+    ]
     assert ("sell", "off_market", 1, 1000000.0) in deals
     assert ("buy", "on_market", 1, 249.0) in deals
 
@@ -179,11 +177,7 @@ def test_price_check_view_does_not_fan_out_across_price_sources():
     join emitted one disposal row per source and would inflate any count taken
     over this view.
     """
-    import pathlib
-
-    sql = pathlib.Path("src/issuer_data/storage/schema.sql").read_text(encoding="utf-8")
-    conn = sqlite3.connect(":memory:")
-    conn.executescript(sql)
+    conn = new_db()
     conn.execute("INSERT INTO companies(company_id, name, source) VALUES (1,'t','dart')")
     conn.execute(
         "INSERT INTO securities(security_id, company_id, market, symbol, source)"
@@ -204,8 +198,8 @@ def test_price_check_view_does_not_fan_out_across_price_sources():
     rows = conn.execute("SELECT premium_pct, amount_residual"
                         " FROM v_kr_treasury_price_check").fetchall()
     assert len(rows) == 1, f"disposal fanned out to {len(rows)} rows"
-    assert rows[0][0] == pytest.approx(11.98, abs=0.01)
-    assert rows[0][1] == 0          # shares * unit_price reconciles to the total
+    assert rows[0]["premium_pct"] == pytest.approx(11.98, abs=0.01)
+    assert rows[0]["amount_residual"] == 0   # shares * unit_price reconciles
 
 
 def test_same_holder_same_day_different_stock_kind_are_distinct_rows():
@@ -232,9 +226,12 @@ def test_same_holder_same_day_different_stock_kind_are_distinct_rows():
     assert len(rows) == 2
 
     conn = _view_db(rows)
-    stored = conn.execute(
-        "SELECT stock_kind, shares_delta FROM kr_stake_changes ORDER BY stock_kind"
-    ).fetchall()
+    stored = [
+        (r["stock_kind"], r["shares_delta"])
+        for r in conn.execute(
+            "SELECT stock_kind, shares_delta FROM kr_stake_changes ORDER BY stock_kind"
+        )
+    ]
     assert stored == [("10", -191684.0), ("11", -11236.0)], "a 변동 line was overwritten"
 
 
