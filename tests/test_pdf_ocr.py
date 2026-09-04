@@ -1,28 +1,67 @@
 """OCR fallback tests — gated on the Tesseract/PyMuPDF stack being installed."""
 
+import glob
 import io
+import os
+import sys
+from functools import cache
 
 import pytest
 
 from issuer_data.pdf_ocr import ocr_available, ocr_pdf
 
+# Rendering the test images needs a scalable font — any of them. Naming specific
+# files skipped these tests everywhere the names did not match: two DejaVu paths
+# meant every Windows machine reported "no scalable font available" while sitting
+# on a directory full of them, so the OCR fallback went untested there.
+_FONT_DIRS = {
+    "win32": (os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts"),
+              os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\Windows\Fonts")),
+    "darwin": ("/System/Library/Fonts", "/Library/Fonts",
+               os.path.expanduser("~/Library/Fonts")),
+}
+_FONT_DIRS_DEFAULT = ("/usr/share/fonts", "/usr/local/share/fonts",
+                      os.path.expanduser("~/.fonts"))
+
+
+@cache
+def _font_path() -> str | None:
+    """Any scalable font on this machine, or None if it genuinely has none."""
+    from PIL import ImageFont
+
+    for name in ("DejaVuSans.ttf", "arial.ttf", "LiberationSans-Regular.ttf"):
+        try:  # Pillow resolves bare names against the platform's own font dirs.
+            return ImageFont.truetype(name, 12).path
+        except OSError:
+            continue
+    for directory in _FONT_DIRS.get(sys.platform, _FONT_DIRS_DEFAULT):
+        for ext in ("ttf", "otf", "ttc"):
+            for path in sorted(glob.glob(os.path.join(directory, "**", f"*.{ext}"),
+                                         recursive=True)):
+                try:
+                    ImageFont.truetype(path, 12)
+                    return path
+                except OSError:
+                    continue  # bitmap-only or broken face; keep looking
+    return None
+
+
+def _font(size: int):
+    """`_font_path` at `size`, skipping only when the machine really has no font."""
+    from PIL import ImageFont
+
+    path = _font_path()
+    if path is None:
+        pytest.skip("no scalable font available to render a legible test image")
+    return ImageFont.truetype(path, size)
+
 
 def _image_only_pdf(text: str) -> bytes:
     """A one-page PDF whose only content is a rendered image of `text` (no text layer)."""
     fitz = pytest.importorskip("fitz")
-    from PIL import Image, ImageDraw, ImageFont
+    from PIL import Image, ImageDraw
 
-    font = None
-    for path in ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-                 "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"):
-        try:
-            font = ImageFont.truetype(path, 60)
-            break
-        except OSError:
-            continue
-    if font is None:
-        pytest.skip("no scalable font available to render a legible test image")
-
+    font = _font(60)
     img = Image.new("RGB", (1400, 300), "white")
     ImageDraw.Draw(img).text((40, 110), text, fill="black", font=font)
     png = io.BytesIO()
@@ -136,12 +175,9 @@ def test_missing_engine_warns_once_with_install_instructions(caplog, monkeypatch
 def _mixed_pdf(prose_before: str, image_text: list[str], prose_after: str) -> bytes:
     """Text page, an image-only page carrying `image_text`, then another text page."""
     fitz = pytest.importorskip("fitz")
-    from PIL import Image, ImageDraw, ImageFont
+    from PIL import Image, ImageDraw
 
-    try:
-        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 34)
-    except OSError:
-        pytest.skip("no scalable font available to render a legible test image")
+    font = _font(34)
     img = Image.new("RGB", (1000, 160 + 90 * len(image_text)), "white")
     draw = ImageDraw.Draw(img)
     for i, line in enumerate(image_text):
