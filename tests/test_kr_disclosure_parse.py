@@ -16,6 +16,7 @@ from issuer_data.kr_disclosure_parse import (
     parse_stake_changes,
     parse_treasury_disposal,
 )
+from issuer_data.models import StakeChange
 
 # Trimmed from 005930 rcept 20260828001916 — roster rows first, then 변동 rows.
 D001 = """<DOCUMENT>
@@ -245,3 +246,24 @@ def test_stock_kind_is_never_null_so_dedup_still_works():
 </TABLE></DOCUMENT>"""
     row = parse_stake_changes(xml)[0]
     assert row["stock_kind"] == "", "absent STK_KND must be '' so the PK still collides"
+
+
+def test_model_turns_absent_key_fields_into_empty_strings():
+    """The '' guarantee has to hold at the model, not only in the parser.
+
+    holder_id and stock_kind are primary-key columns, so a None reaching the
+    database defeats deduplication where it does not simply refuse the row. The
+    parser emits '' today, but it is not the only way a StakeChange gets built.
+    """
+    change = StakeChange(symbol="005930", market="KR", source="dart",
+                         rcept_no="rc1", change_date="2026-01-01",
+                         holder_name="홍길동")
+    assert change.holder_id == ""
+    assert change.stock_kind == ""
+
+    explicit_none = StakeChange(symbol="005930", market="KR", source="dart",
+                                rcept_no="rc1", change_date="2026-01-01",
+                                holder_name="홍길동",
+                                holder_id=None, stock_kind=None)
+    assert explicit_none.holder_id == ""
+    assert explicit_none.stock_kind == ""

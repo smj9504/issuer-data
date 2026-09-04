@@ -260,17 +260,30 @@ class StakeChange(_SymBase):
     rcept_no: str                        # DART 접수번호 (deal-level key)
     change_date: str                     # MDF_DT
     holder_name: str                     # SPC_NM — 보고자/특별관계자
-    holder_id: str | None = None         # SPC_ID2 — 사업자등록번호/생년월일
+    holder_id: str = ""                  # SPC_ID2 — 사업자등록번호/생년월일
     holder_type: str | None = None       # SPC_TP code (K/I/D/...)
     holder_type_label: str | None = None
     relation: str | None = None          # FLT_CRP_RLT code (10/14/16/...)
     relation_label: str | None = None
     method: str | None = None            # HLD_MTH code
     method_label: str | None = None      # e.g. '장내매도(-)'
-    stock_kind: str | None = None        # STK_KND code
+    stock_kind: str = ""                 # STK_KND code
     shares_before: float | None = None   # BFR_MDF_CNT
     shares_delta: float | None = None    # MDF_SDK_CNT (signed)
     report_type: str | None = None       # RPT_DST1: 신규/변동/변경
+
+    @field_validator("holder_id", "stock_kind", mode="before")
+    @classmethod
+    def _absent_is_empty_not_null(cls, v):
+        """Both columns sit in the primary key, where NULL defeats deduplication.
+
+        A missing 사업자등록번호 or 주식종류 has to arrive as '' rather than None:
+        NULL never equals NULL, so two filings identical but for an unreported
+        code would both insert instead of one replacing the other. Pinning it
+        here rather than in the column default keeps the guarantee independent
+        of what the database does with a NULL it was handed.
+        """
+        return "" if v is None else v
 
 
 class TreasuryDisposal(_SymBase):
