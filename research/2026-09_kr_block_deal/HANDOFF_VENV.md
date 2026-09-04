@@ -151,7 +151,9 @@ venv를 만들어도 `.env`는 CWD 기준으로 읽히므로 **그대로 두면 
 
 ### 3.5 DB는 venv와 무관하다
 
-`data/issuer_data.sqlite`는 그대로 쓴다. venv 작업이 DB를 건드릴 이유가 없다.
+DB는 PostgreSQL 서버이므로(2026-09-04 이전) venv와 무관하다. `.env`의
+`ISSUER_DB_DSN`만 맞으면 되고, venv 작업이 DB를 건드릴 이유가 없다. 테스트는 별도의
+일회용 컨테이너를 쓴다: `docker compose -f docker-compose.test.yml up -d`.
 현재 상태는 `HANDOFF.md` §0 참고 (KR 종목 2개, `kr_stake_changes` 189행 —
 검증용 표본 수준이며 본 스윕은 아직 안 돌렸다).
 

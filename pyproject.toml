@@ -5,13 +5,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "issuer-data"
 version = "0.1.0"
-description = "Multi-market issuer/security data collector (DART, KRX, HKEXnews, SEC EDGAR, yfinance, FMP, Alpha Vantage) into a unified SQLite DB"
+description = "Multi-market issuer/security data collector (DART, KRX, HKEXnews, SEC EDGAR, yfinance, FMP, Alpha Vantage) into a unified PostgreSQL DB"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 dependencies = [
     # pandas 2.2.2 dropped the numpy<2 cap, which conflicts with pykrx's numpy>=2.
     "pandas>=2.2.2",
+    "psycopg[binary,pool]>=3.1",
     "requests>=2.32",
     "pydantic>=2.7",
     "pydantic-settings>=2.3",

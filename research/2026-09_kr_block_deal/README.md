@@ -122,10 +122,10 @@ SEL_PPS         임원 등 성과급 지급    처분 목적
 
 ```sql
 SELECT company_id, holder_name, change_date, method, shares_delta,
-       COUNT(DISTINCT rcept_no) n, GROUP_CONCAT(DISTINCT rcept_no)
+       COUNT(DISTINCT rcept_no) n, string_agg(DISTINCT rcept_no, ',')
 FROM kr_stake_changes
 GROUP BY company_id, holder_name, change_date, method, shares_delta
-HAVING n > 1;
+HAVING COUNT(DISTINCT rcept_no) > 1;
 ```
 
 ## 전 종목 스윕 전에 확인한 것 (2026-09-04)

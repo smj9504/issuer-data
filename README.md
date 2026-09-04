@@ -1,6 +1,6 @@
 # issuer-data
 
-Multi-market issuer/security **data collector** into a unified **SQLite** database.
+Multi-market issuer/security **data collector** into a unified **PostgreSQL** database.
 
 It pulls **issuer/security master**, **daily OHLCV prices**, **financial statements**,
 and **disclosures/filings** (with original documents + extracted text) from Korea, Hong
@@ -41,10 +41,30 @@ ISSUER_DART_API_KEY=            # free: https://opendart.fss.or.kr
 ISSUER_FMP_API_KEY=             # free tier: https://financialmodelingprep.com
 ISSUER_ALPHAVANTAGE_API_KEY=    # free: https://www.alphavantage.co/support/#api-key
 ISSUER_SEC_USER_AGENT=Your Name your-email@example.com   # required or EDGAR returns 403
-ISSUER_DB_PATH=data/issuer_data.sqlite
+ISSUER_DB_DSN=postgresql://user:password@host:5432/issuer_data
 ```
 
 No key is needed for SEC EDGAR (just a descriptive User-Agent), HKEXnews, or yfinance.
+
+`ISSUER_DB_DSN` is the one setting that is not optional. A remote host gets
+`sslmode=verify-full` unless the DSN chooses for itself; loopback is exempt.
+
+Collection runs on one machine while analysis runs on another, so the database is a
+server rather than a file. Anyone who only reads should connect as a role that only
+reads -- the CLI's read-only check on `query` is a guard rail, not a boundary:
+
+```sql
+CREATE ROLE analyst LOGIN PASSWORD '...';
+GRANT CONNECT ON DATABASE issuer_data TO analyst;
+GRANT USAGE ON SCHEMA public TO analyst;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO analyst;
+-- without this, tables added later are invisible to the role
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO analyst;
+ALTER ROLE analyst SET default_transaction_read_only = on;
+```
+
+For the test suite, `docker compose -f docker-compose.test.yml up -d` brings up a
+throwaway Postgres on port 55432; tests skip if it is not running.
 
 ## Usage
 

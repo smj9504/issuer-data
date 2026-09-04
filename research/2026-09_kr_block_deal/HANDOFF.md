@@ -1,14 +1,14 @@
 # 인수인계 — 전 종목 스윕 실행 대기
 
 작성: 2026-09-03 · 갱신: 2026-09-04 (스윕 전 점검에서 데이터 유실 발견·수정,
-마스터 소스·종목 수 정정)
+마스터 소스·종목 수 정정, PostgreSQL 이전)
 대상: 다른 세션에서 이어받을 사람
 전제: `research/2026-09_kr_block_deal/README.md`(설계·실측)를 먼저 읽을 것.
 
 **다른 머신에서 시작한다면 먼저:** `.env`는 git에 없다(`.gitignore`). `.env.example`을
-복사해 최소 `ISSUER_DART_API_KEY`를 채워야 스윕이 돈다. `ISSUER_DB_PATH`가 가리키는
-SQLite 파일도 함께 옮기지 않으면 빈 DB에서 처음부터 시작한다 — 그래도 동작은 하지만
-이미 받은 5건을 다시 받는다. 환경 구축은 `HANDOFF_VENV.md` 참고.
+복사해 `ISSUER_DART_API_KEY`와 `ISSUER_DB_DSN`을 채워야 스윕이 돈다. **DB는 PostgreSQL로
+옮겼으므로 파일을 복사할 것이 없다** — 두 머신이 같은 DSN을 보면 된다 (§5). 새 DB라면
+`init-db` 후 마스터부터. 환경 구축은 `HANDOFF_VENV.md` 참고.
 
 ## 한 줄 요약
 
@@ -26,7 +26,7 @@ SQLite 파일도 함께 옮기지 않으면 빈 DB에서 처음부터 시작한�
 | `kr_treasury_disposals` | 8행 |
 | `scan_progress` 커서 | 5행 (테스트 스윕 흔적) |
 | 오늘 쓴 DART 호출 | 11회 (`api_call_budget`) |
-| 테스트 | 222 passed, 6 skipped · ruff clean |
+| 테스트 | 248 passed, 1 skipped · ruff clean (PostgreSQL 기준) |
 
 즉 **실데이터는 검증용 표본 수준**이다. 본 스윕은 아직 안 돌렸다.
 
@@ -115,10 +115,10 @@ SELECT ... FROM v_kr_stake_sales WHERE change_date BETWEEN '2026-01-01' AND '202
 
 ```sql
 SELECT company_id, holder_name, change_date, method, shares_delta,
-       COUNT(DISTINCT rcept_no) n, GROUP_CONCAT(DISTINCT rcept_no)
+       COUNT(DISTINCT rcept_no) n, string_agg(DISTINCT rcept_no, ',')
 FROM kr_stake_changes
 GROUP BY company_id, holder_name, change_date, method, shares_delta
-HAVING n > 1;
+HAVING COUNT(DISTINCT rcept_no) > 1;
 ```
 
 **(b) 미지 `HLD_MTH` 코드** — 사전은 22건 표본 기반 16개라 불완전하다. 새 코드가
@@ -170,9 +170,11 @@ D001 변동명세에는 **거래 단가 필드가 존재하지 않는다.** 파�
    기타주식은 별개 변동이다. 빼면 한쪽이 덮어써져 조용히 사라진다 — 실제로
    `20260805000440`에서 64행 중 4행(191,684주 포함)이 유실됐었다
    (`test_same_holder_same_day_different_stock_kind_are_distinct_rows`).
-4. **PK 컬럼은 NULL이 아니라 `''`를 쓴다** (`holder_id`, `stock_kind`). SQLite에서
-   NULL은 서로 같지 않아 dedup이 조용히 깨진다
-   (`test_stock_kind_is_never_null_so_dedup_still_works`).
+4. **PK 컬럼은 NULL이 아니라 `''`를 쓴다** (`holder_id`, `stock_kind`, `method`).
+   NULL은 서로 같지 않아 dedup이 조용히 깨진다. 예전엔 SQLite의 `INSERT OR REPLACE`가
+   NULL을 조용히 `''`로 바꿔줘서 버텼지만 PostgreSQL은 거부하므로, 이제 모델의
+   validator가 보장한다 (`test_model_turns_absent_key_fields_into_empty_strings`,
+   `test_stock_kind_is_never_null_so_dedup_still_works`).
 5. **미지 `HLD_MTH` 코드는 버리지 않고 원값 보존한다.**
 6. **가격 조인은 (company, date)당 1건으로 접어야 한다.** krx·yfinance가 같은 날 종가를
    둘 다 갖고 있어 조인이 갈라지면 집계가 부풀려진다
@@ -187,19 +189,23 @@ D001 변동명세에는 **거래 단가 필드가 존재하지 않는다.** 파�
 10. **예산 소진은 종목 실패로 기록하지 않는다.** 실행 기회조차 없었으므로 `error`로
     남기면 데이터에 대한 거짓말이 된다. 커서에서 아예 빠진다.
 
-## 5. 스키마 마이그레이션 동작 (알아둘 것)
+## 5. 스키마 적용 동작 (알아둘 것)
 
-`connect()`가 열 때마다 스키마를 자동 적용한다. 세 층이 있다:
+**DB는 이제 PostgreSQL이다** (2026-09-04 이전 완료). 컴퓨터 A가 스윕을 돌리는 동안
+컴퓨터 B가 같은 DB를 읽어야 해서 서버형으로 옮겼다. `.env`의 `ISSUER_DB_DSN`이 접속
+문자열이며, 로컬이 아닌 호스트는 DSN이 직접 정하지 않는 한 `sslmode=verify-full`이 붙는다.
 
-- **없는 테이블/뷰** → 스키마 스크립트 재적용으로 생성
-- **없는 컬럼** → `_ADDED_COLUMNS`의 `ALTER TABLE ADD COLUMN`
-- **바뀐 PK** → `_REKEYED`에 등록된 테이블을 재생성 (SQLite는 PK 변경 불가)
+**스키마는 `init-db`에서만 적용된다.** 예전에는 `connect()`가 열 때마다 자동 적용했지만,
+공유 서버에서는 접속하는 모든 프로세스가 DROP/CREATE VIEW를 치게 되어 서로 뷰를 지운다.
+대신 `schema_meta`에 버전이 있고 `connect()`가 이를 **읽어서 경고만** 한다 — DDL은 치지 않는다.
+경고가 뜨면 `init-db`를 돌릴 것.
 
-PK 재생성은 기존 행을 옮겨오지만 **옛 키로 이미 덮어써진 데이터는 복구하지 못한다.**
-경고를 로그로 남기며, 복구하려면 해당 기간을 `--reparse`로 재수집해야 한다.
+3층 자동 마이그레이션(`_ADDED_COLUMNS`/`_REKEYED`/테이블 재생성)은 **삭제됐다.** SQLite가
+PK를 못 바꿔서 있던 장치이고, PostgreSQL은 `ALTER TABLE ... DROP CONSTRAINT ... ADD
+PRIMARY KEY`가 된다. 스키마를 바꾸면 `db.py`의 `SCHEMA_VERSION`을 올리고 `init-db`를 돌린다.
 
-새 컬럼/PK를 바꿀 때는 이 두 리스트에 등록할 것. 등록을 잊으면 다른 사람의 기존 DB에서만
-깨지고 fresh clone에서는 멀쩡해서 재현이 어렵다.
+스윕과 분석을 다른 머신에서 돌린다면 **읽기 전용 롤**을 쓸 것 (README 참고). CLI의
+`query` 읽기 전용 검사는 접두어만 보므로 `WITH ... DELETE RETURNING`에 뚫린다.
 
 ## 6. 관련 파일
 
@@ -208,8 +214,10 @@ PK 재생성은 기존 행을 옮겨오지만 **옛 키로 이미 덮어써진 �
   호출 과금(`_spend`), 접수번호 스킵
 - `src/issuer_data/collectors/base.py` — `CallBudget` / `QuotaExceededError`
 - `src/issuer_data/orchestrator.py` — `collect_coverage`의 재개·예산·`reparse` 루프
-- `src/issuer_data/storage/db.py` — 3층 마이그레이션
+- `src/issuer_data/storage/db.py` — 접속 팩토리 · `init_db` · 스키마 버전 확인
 - `src/issuer_data/storage/schema.sql` — 테이블 4개 + 뷰 3개
 - `tests/test_kr_disclosure_parse.py` — 파서·뷰 회귀 14건
 - `tests/test_market_scan_resume.py` — 재개·예산 회귀 20건
-- `tests/test_db_migration.py` — 마이그레이션 회귀 8건
+- `tests/test_schema_apply.py` — 스키마 적용/버전 경고 회귀
+- `tests/test_no_sqlite_isms.py` — 방언 실수 grep (플레이스홀더·REAL 등)
+- `docker-compose.test.yml` — 테스트용 Postgres (포트 55432, 비영속)
