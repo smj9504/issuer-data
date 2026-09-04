@@ -1,6 +1,7 @@
 def test_schema_creates_tables_and_views(conn):
-    tables = {r[0] for r in conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table'"
+    tables = {r["table_name"] for r in conn.execute(
+        "SELECT table_name FROM information_schema.tables "
+        "WHERE table_schema = 'public' AND table_type = 'BASE TABLE'"
     )}
     expected = {
         "companies", "securities", "identifier_xref", "prices", "financials",
@@ -8,7 +9,7 @@ def test_schema_creates_tables_and_views(conn):
     }
     assert expected <= tables
 
-    views = {r[0] for r in conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='view'"
+    views = {r["table_name"] for r in conn.execute(
+        "SELECT table_name FROM information_schema.views WHERE table_schema = 'public'"
     )}
     assert {"v_latest_price", "v_company_overview"} <= views

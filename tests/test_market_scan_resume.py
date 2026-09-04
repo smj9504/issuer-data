@@ -37,12 +37,13 @@ def _seed_securities(conn, symbols):
     """Minimal company+security rows so symbol -> company_id resolves."""
     for sym in symbols:
         cur = conn.execute(
-            "INSERT INTO companies(name, country, source) VALUES (?,?,?)",
+            "INSERT INTO companies(name, country, source) VALUES (%s,%s,%s) "
+            "RETURNING company_id",
             (sym, "KR", "test"),
         )
         conn.execute(
-            "INSERT INTO securities(company_id, market, symbol, source) VALUES (?,?,?,?)",
-            (cur.lastrowid, "KR", sym, "test"),
+            "INSERT INTO securities(company_id, market, symbol, source) VALUES (%s,%s,%s,%s)",
+            (cur.fetchone()["company_id"], "KR", sym, "test"),
         )
     conn.commit()
 
@@ -135,7 +136,7 @@ def test_known_rcept_nos_reads_back_what_was_stored(repo, conn):
     cid = repo.get_company_id_for_symbol("KR", "005930")
     conn.execute(
         "INSERT INTO kr_stake_changes(company_id, rcept_no, change_date, holder_name, "
-        "holder_id, source) VALUES (?,?,?,?,?,?)",
+        "holder_id, source) VALUES (%s,%s,%s,%s,%s,%s)",
         (cid, "20260828001916", "2026-07-29", "삼성생명보험", "104-81-26688", "dart"),
     )
     conn.commit()

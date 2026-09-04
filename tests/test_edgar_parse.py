@@ -270,7 +270,7 @@ def test_anchor_investor_signals_both_persist_via_upsert_coverage(monkeypatch, c
     """Regression test for the PK widening: two distinct investors disclosed
     in the same filing share (company_id, signal_date, signal_type, source)
     — only the added `investor_name` column keeps them from colliding under
-    Repository.upsert_coverage's INSERT OR REPLACE.
+    Repository.upsert_coverage's conflict clause.
     """
     c = _collector(monkeypatch, {})
     monkeypatch.setattr(c.client, "get_bytes", lambda url, **kw: ANCHOR_HTML_TWO)

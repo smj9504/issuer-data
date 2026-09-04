@@ -44,7 +44,7 @@ def test_period_average_and_usd_view(conn, monkeypatch):
     assert abs(avg - 0.0009) < 1e-9  # mean of the two spot rates
 
     rows = {r["statement_type"]: r["value_usd"] for r in conn.execute(
-        "SELECT statement_type, value_usd FROM v_financials_usd WHERE company_id=?", (cid,))}
+        "SELECT statement_type, value_usd FROM v_financials_usd WHERE company_id=%s", (cid,))}
     # IS flow uses avg (0.0009); BS stock uses nearest-prior spot at period_end (0.0010)
     assert abs(rows["IS"] - 1000.0 * 0.0009) < 1e-6
     assert abs(rows["BS"] - 2000.0 * 0.0010) < 1e-6
