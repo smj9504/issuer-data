@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import inspect
-import sqlite3
+
+import psycopg
 
 from .collectors.base import NotSupportedError
 from .collectors.registry import build_collector, default_source
@@ -19,7 +20,7 @@ log = get_logger(__name__)
 
 
 class Orchestrator:
-    def __init__(self, conn: sqlite3.Connection, settings: Settings) -> None:
+    def __init__(self, conn: psycopg.Connection, settings: Settings) -> None:
         self.conn = conn
         self.settings = settings
         self.repo = Repository(conn)

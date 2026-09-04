@@ -44,7 +44,10 @@ class Settings(BaseSettings):
     sec_user_agent: str = "issuer-data research your-email@example.com"
 
     # --- Storage ------------------------------------------------------------
-    db_path: Path = Path("data/issuer_data.sqlite")
+    # PostgreSQL, so a collection on one machine and analysis on another can
+    # share one database. The default points at the local test container; a
+    # real deployment sets ISSUER_DB_DSN in .env, which is not tracked.
+    db_dsn: str = "postgresql://issuer:issuer@localhost:55432/issuer_test"
     docs_dir: Path = Path("data/documents")
     overrides_path: Path = Path("data/company_overrides.csv")
 

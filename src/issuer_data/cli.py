@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 from .collectors.base import DEFAULT_DAILY_CALL_BUDGET
 from .config import get_settings
 from .logging import get_logger, setup_logging
-from .storage.db import connect, init_db
+from .storage.db import connect, init_db, redact
 
 log = get_logger(__name__)
 
@@ -42,8 +42,10 @@ def _types(arg: str) -> list[str]:
 
 # --------------------------------------------------------------------- commands
 def cmd_init_db(args) -> int:
-    path = init_db(get_settings().db_path)
-    print(f"Initialized database at {path}")
+    # redact: the DSN carries a password, and this line is the one most likely
+    # to be pasted into a bug report.
+    dsn = init_db(get_settings().db_dsn)
+    print(f"Initialized database at {redact(dsn)}")
     return 0
 
 
@@ -58,7 +60,7 @@ def cmd_collect(args) -> int:
     if getattr(args, "ml_engine", None):
         settings.pdf_ml_engine = args.ml_engine
         settings.pdf_ml_tables = True
-    conn = connect(settings.db_path)
+    conn = connect(settings.db_dsn)
     orch = Orchestrator(conn, settings)
     symbols = _split_csv(args.symbols)
     total = 0
@@ -145,7 +147,7 @@ def cmd_download_docs(args) -> int:
     if getattr(args, "ml_engine", None):
         settings.pdf_ml_engine = args.ml_engine
         settings.pdf_ml_tables = True
-    conn = connect(settings.db_path)
+    conn = connect(settings.db_dsn)
     try:
         n = backfill_documents(conn, settings, _split_csv(args.symbols),
                                _markets(args.market) if args.market != "all" else None,
@@ -161,7 +163,7 @@ def cmd_link(args) -> int:
     from .storage.repository import Repository
 
     settings = get_settings()
-    conn = connect(settings.db_path)
+    conn = connect(settings.db_dsn)
     repo = Repository(conn)
     try:
         if args.overrides:
@@ -213,7 +215,7 @@ def cmd_compare(args) -> int:
     from .services import compare_symbols
 
     settings = get_settings()
-    conn = connect(settings.db_path)
+    conn = connect(settings.db_dsn)
     try:
         compare_symbols(conn, _split_csv(args.symbols) or [])
     finally:
@@ -237,7 +239,7 @@ def cmd_law(args) -> int:
     repo = None
     company_id = None
     if args.save:
-        conn = connect(settings.db_path)
+        conn = connect(settings.db_dsn)
         repo = Repository(conn)
         if args.symbol:
             company_id = _company_id_for_law_link(repo, args.symbol)
@@ -363,7 +365,7 @@ def _truncate(v, n: int = 60) -> str:
 
 def cmd_status(args) -> int:
     settings = get_settings()
-    conn = connect(settings.db_path)
+    conn = connect(settings.db_dsn)
     try:
         rows = conn.execute(
             "SELECT run_id, market, data_type, source, status, rows_written, "
@@ -419,11 +421,14 @@ def _print_scan_state(conn) -> None:
 
 def cmd_query(args) -> int:
     settings = get_settings()
-    conn = connect(settings.db_path)
+    conn = connect(settings.db_dsn)
     try:
         sql = args.sql.strip()
-        if not sql.lower().startswith(("select", "with", "pragma", "explain")):
-            print("Only read-only queries (SELECT/WITH/PRAGMA/EXPLAIN) are allowed.")
+        # A prefix check is a guard rail, not a boundary: `WITH t AS (DELETE
+        # ... RETURNING *) SELECT * FROM t` starts with "with" and writes. Give
+        # anyone who only reads a database role that only reads.
+        if not sql.lower().startswith(("select", "with", "explain", "table")):
+            print("Only read-only queries (SELECT/WITH/EXPLAIN/TABLE) are allowed.")
             return 2
         cur = conn.execute(sql)
         cols = [d[0] for d in cur.description] if cur.description else []

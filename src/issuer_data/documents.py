@@ -20,11 +20,12 @@ from __future__ import annotations
 import gzip
 import io
 import json
-import sqlite3
 import warnings
 import zipfile
 from pathlib import Path
 from urllib.parse import unquote, urlparse
+
+import psycopg
 
 # BeautifulSoup emits noisy warnings when markup looks like XML/URL; ignore them.
 warnings.filterwarnings("ignore", module="bs4")
@@ -393,7 +394,7 @@ def download_filing_documents(
 
 
 def backfill_documents(
-    conn: sqlite3.Connection,
+    conn: psycopg.Connection,
     settings: Settings,
     symbols: list[str] | None,
     markets: list[str] | None,

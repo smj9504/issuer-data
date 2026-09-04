@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from collections.abc import Iterable
+
+import psycopg
 
 from ..logging import get_logger
 from ..models import (
@@ -31,11 +32,11 @@ _ID_PRIORITY = ("LEI", "CIK", "CORP_CODE", "ISIN")
 
 
 class Repository:
-    def __init__(self, conn: sqlite3.Connection) -> None:
+    def __init__(self, conn: psycopg.Connection) -> None:
         self.conn = conn
 
     # ------------------------------------------------------------------ helpers
-    def _exec(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
+    def _exec(self, sql: str, params: tuple = ()) -> psycopg.Cursor:
         return self.conn.execute(sql, params)
 
     def commit(self) -> None:

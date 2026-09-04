@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import datetime as _dt
-import sqlite3
+
+import psycopg
 
 from .collectors.base import NotSupportedError
 from .collectors.registry import build_collector
@@ -46,7 +47,7 @@ def collect_fx(repo: Repository, settings: Settings, start: str | None, end: str
     return total
 
 
-def _needed_currencies(conn: sqlite3.Connection) -> list[str]:
+def _needed_currencies(conn: psycopg.Connection) -> list[str]:
     rows = conn.execute(
         "SELECT DISTINCT currency FROM securities WHERE currency IS NOT NULL AND currency <> 'USD' "
         "UNION SELECT DISTINCT currency FROM prices WHERE currency IS NOT NULL AND currency <> 'USD' "
@@ -174,7 +175,7 @@ def collect_peers(repo: Repository, settings: Settings, market: str, symbols: li
 
 
 # --------------------------------------------------------------------- compare
-def compare_symbols(conn: sqlite3.Connection, symbols: list[str]) -> None:
+def compare_symbols(conn: psycopg.Connection, symbols: list[str]) -> None:
     """Print a multi-market side-by-side table (local + USD) for the given symbols."""
     if not symbols:
         print("No symbols given.")

@@ -204,6 +204,16 @@ CREATE TABLE IF NOT EXISTS api_call_budget (
     PRIMARY KEY (source, call_date)
 );
 
+-- What structure this database is on, so a connection can say "run init-db"
+-- instead of failing later on a column that was added after it was created.
+-- Nothing migrates automatically: on a shared server, every process applying
+-- the schema on connect would have them dropping and recreating views on top
+-- of each other.
+CREATE TABLE IF NOT EXISTS schema_meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
 -- Every view is dropped here, before any is recreated, most-dependent first:
 -- v_kr_stake_deals reads from v_kr_stake_sales, and a database that refuses to
 -- drop a view something still depends on would reject the schema outright if
