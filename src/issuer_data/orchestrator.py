@@ -25,6 +25,41 @@ class Orchestrator:
         self.settings = settings
         self.repo = Repository(conn)
 
+    def _recover_connection(self) -> bool:
+        """Clear the transaction, reopening the connection if it has died.
+
+        A market-wide sweep runs for two days over the internet, so it will
+        outlive at least one connection: a provider restart, an idle timeout, a
+        dropped route. Losing the sweep to that would cost the rest of the day's
+        quota, because the cursor is what makes --resume cheap and the cursor
+        write is the very thing that cannot run on a dead connection.
+
+        Returns False when the connection is gone and will not come back; the
+        caller then lets the failure propagate rather than looping.
+        """
+        try:
+            self.conn.rollback()
+            return True
+        except psycopg.Error:
+            pass
+        from .storage.db import connect
+
+        try:
+            self.conn.close()
+        except Exception as exc:  # noqa: BLE001 - already broken
+            log.debug("closing the dead connection failed: %s", exc)
+        try:
+            self.conn = connect(self.settings.db_dsn)
+        except psycopg.Error as exc:
+            log.error("Database connection lost and could not be reopened: %s", exc)
+            return False
+        # The repository holds the connection, so it has to be rebuilt too --
+        # and with it the cached primary keys, which are still valid but belong
+        # to the old object.
+        self.repo = Repository(self.conn)
+        log.warning("Database connection was reopened after being dropped")
+        return True
+
     # ------------------------------------------------------------------ master
     def ensure_master(self, market: str, symbols: list[str]) -> None:
         """Make sure each symbol has a security+company row; fetch master if missing."""
@@ -278,16 +313,18 @@ class Orchestrator:
                     items = method(sym, start2, end2) if dated else method(sym)
                 except (NotSupportedError, QuotaExceededError):
                     raise
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     log.warning("%s %s:%s failed: %s", data_type, market, sym, exc)
-                    # Roll back before recording the failure. If what failed was
-                    # a statement rather than the network, the transaction is
-                    # poisoned and every later one raises until it is cleared --
-                    # including this symbol's cursor write and the next symbol's.
-                    # A sweep would keep running while silently recording
-                    # nothing, and the resume that follows would re-fetch
-                    # everything and spend the day's quota again.
-                    self.conn.rollback()
+                    # Clear the transaction before recording the failure. If
+                    # what failed was a statement rather than the network, the
+                    # transaction is poisoned and every later one raises until
+                    # it is cleared -- including this symbol's cursor write and
+                    # the next symbol's. A sweep would keep running while
+                    # silently recording nothing, and the resume that follows
+                    # would re-fetch everything and spend the day's quota again.
+                    # If the connection itself died, this reopens it.
+                    if not self._recover_connection():
+                        raise
                     self._mark_symbol(market, data_type, src, start2, end2, sym, "error",
                                       0, getattr(collector, "api_calls", 0) - before_calls,
                                       str(exc), budget)

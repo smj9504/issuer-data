@@ -330,3 +330,39 @@ def test_not_supported_from_a_symbol_still_aborts_the_sweep(conn, monkeypatch):
     orch = _orchestrator(conn, _Unsupported(), monkeypatch)
     orch.collect_coverage("KR", "stake", None, None, "2026-01-01", "2026-08-31")
     assert conn.execute("SELECT COUNT(*) AS n FROM scan_progress").fetchone()["n"] == 0
+
+
+def test_a_dropped_connection_does_not_end_the_sweep(conn, monkeypatch):
+    """A two-day sweep outlives at least one connection; it must not die with it.
+
+    Losing it costs the rest of the day's quota, because --resume is only cheap
+    while the cursor is being written -- and the cursor write is exactly what
+    cannot run on a dead connection.
+    """
+    _seed_securities(conn, ["000660", "005930"])
+    collector = _FakeDart(per_symbol={
+        "000660": [_change("000660", "rc1")],
+        "005930": [_change("005930", "rc2")],
+    })
+    orch = _orchestrator(conn, collector, monkeypatch)
+
+    # Kill the connection out from under the first symbol, the way a provider
+    # restart or an idle timeout would.
+    original = collector.fetch_stake_changes
+    killed = []
+
+    def _kill_once(symbol, start, end):
+        if not killed:
+            killed.append(symbol)
+            orch.conn.close()
+            raise RuntimeError("server closed the connection unexpectedly")
+        return original(symbol, start, end)
+
+    monkeypatch.setattr(collector, "fetch_stake_changes", _kill_once)
+    orch.collect_coverage("KR", "stake", None, ["000660", "005930"],
+                          "2026-01-01", "2026-08-31")
+
+    # The surviving connection is a new one, so read through it.
+    summary = Repository(orch.conn).scan_summary(*SCOPE)
+    assert summary["error"] == 1, "the killed symbol should be recorded as failed"
+    assert summary["done"] == 1, "the sweep should have carried on to the next symbol"

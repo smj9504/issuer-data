@@ -363,6 +363,66 @@ def _truncate(v, n: int = 60) -> str:
     return s if len(s) <= n else s[: n - 1] + "…"
 
 
+def cmd_check_db(args) -> int:
+    """Confirm the database is reachable, private, and ready for a sweep.
+
+    Worth one round trip before spending two days of metered API calls against
+    it: every line here is something that fails late and expensively otherwise.
+    """
+    import time
+
+    import psycopg
+
+    settings = get_settings()
+    dsn = settings.db_dsn
+    print(f"DSN        {redact(dsn)}")
+
+    t0 = time.monotonic()
+    try:
+        conn = connect(dsn, ensure_schema=True)
+    except psycopg.Error as exc:
+        print(f"FAILED     could not connect: {exc.__class__.__name__}: {exc}")
+        return 1
+    latency_ms = (time.monotonic() - t0) * 1000
+
+    try:
+        info = conn.info
+        enc = conn.execute("SHOW server_encoding").fetchone()[0]
+        version = conn.execute("SHOW server_version").fetchone()[0]
+        # TLS: the one check that cannot be inferred from the DSN, since libpq
+        # may have negotiated something other than what was asked for.
+        tls = "yes" if info.pgconn.ssl_in_use else "no"
+        print(f"Server     PostgreSQL {version} ({enc})")
+        print(f"Connect    {latency_ms:.0f} ms   TLS: {tls}")
+        if tls == "no" and str(info.host) not in ("localhost", "127.0.0.1", "::1"):
+            print("           WARNING: traffic to a remote host is in the clear")
+        if latency_ms > 500:
+            print("           (a sweep makes one round trip per symbol; a far "
+                  "region will show here)")
+
+        schema = conn.execute(
+            "SELECT value FROM schema_meta WHERE key = 'schema_version'"
+        ).fetchone()
+        print(f"Schema     {schema['value'] if schema else 'MISSING -- run init-db'}")
+
+        writable = conn.execute("SHOW transaction_read_only").fetchone()[0] != "on"
+        print(f"Role       {info.user}   writes: {'yes' if writable else 'no (read-only)'}")
+
+        counts = conn.execute(
+            "SELECT (SELECT count(*) FROM securities WHERE market='KR') AS kr,"
+            "       (SELECT count(*) FROM kr_stake_changes)             AS stake,"
+            "       (SELECT count(*) FROM scan_progress)                AS cursor"
+        ).fetchone()
+        print(f"Data       KR securities {counts['kr']}, stake rows {counts['stake']}, "
+              f"cursor {counts['cursor']}")
+        if counts["kr"] < 100:
+            print("           (a full sweep needs the master first: "
+                  "collect --market kr --type master --source dart)")
+    finally:
+        conn.close()
+    return 0
+
+
 def cmd_status(args) -> int:
     settings = get_settings()
     conn = connect(settings.db_dsn)
@@ -558,6 +618,10 @@ def build_parser() -> argparse.ArgumentParser:
     cmp = sub.add_parser("compare", help="multi-market side-by-side (local + USD)")
     cmp.add_argument("--symbols", required=True, help="comma-separated symbols")
     cmp.set_defaults(func=cmd_compare)
+
+    chk = sub.add_parser("check-db",
+                         help="verify the database connection and schema")
+    chk.set_defaults(func=cmd_check_db)
 
     st = sub.add_parser("status", help="recent collection runs")
     st.add_argument("--limit", type=int, default=20)

@@ -96,8 +96,13 @@ def conn(_pg_dsn) -> psycopg.Connection:
     c = psycopg.connect(_pg_dsn, row_factory=row_factory)
     yield c
     # Roll back whatever the test left open before closing, so a failure
-    # part-way through cannot leave a lock behind for the next test.
-    c.rollback()
+    # part-way through cannot leave a lock behind for the next test. A test
+    # that closed the connection on purpose -- the dropped-connection case --
+    # has nothing to roll back.
+    try:
+        c.rollback()
+    except psycopg.Error:
+        pass
     c.close()
 
 

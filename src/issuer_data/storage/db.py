@@ -81,10 +81,24 @@ def connect(dsn: str | None = None, *, ensure_schema: bool = False
     if dsn is None:
         dsn = get_settings().db_dsn
     conn = psycopg.connect(_with_sslmode(dsn), row_factory=row_factory,
-                           client_encoding="UTF8")
+                           client_encoding="UTF8", **_KEEPALIVE)
     if ensure_schema:
         _check_schema(conn)
     return conn
+
+
+# A market-wide sweep holds one connection open for hours while most of its time
+# goes on API calls, not queries. Left to the defaults, a NAT or load balancer
+# between here and a hosted database drops a connection it has seen no traffic
+# on, and the next statement fails hours in. These make the client send its own
+# traffic well before that: idle 60s, then probe, and give up after ~2 minutes
+# so a genuinely dead connection is reported rather than hung on.
+_KEEPALIVE = {
+    "keepalives": 1,
+    "keepalives_idle": 60,
+    "keepalives_interval": 15,
+    "keepalives_count": 5,
+}
 
 
 def _check_schema(conn: psycopg.Connection) -> None:
