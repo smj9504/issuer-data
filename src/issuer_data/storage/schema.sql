@@ -201,10 +201,21 @@ CREATE TABLE IF NOT EXISTS api_call_budget (
     PRIMARY KEY (source, call_date)
 );
 
+-- Every view is dropped here, before any is recreated, most-dependent first:
+-- v_kr_stake_deals reads from v_kr_stake_sales, and a database that refuses to
+-- drop a view something still depends on would reject the schema outright if
+-- these sat next to their own CREATE. Ordering the drops rather than cascading
+-- them keeps a view added later from being torn out silently as collateral.
+DROP VIEW IF EXISTS v_kr_stake_deals;
+DROP VIEW IF EXISTS v_kr_stake_sales;
+DROP VIEW IF EXISTS v_kr_treasury_price_check;
+DROP VIEW IF EXISTS v_financials_usd;
+DROP VIEW IF EXISTS v_company_overview;
+DROP VIEW IF EXISTS v_latest_price;
+
 -- Cross-market comparison views (local + USD in one place) --------------------
 -- Latest price per security with USD conversion via the NEAREST-PRIOR fx_rate
 -- (so holidays / small range gaps still resolve).
-DROP VIEW IF EXISTS v_latest_price;
 CREATE VIEW v_latest_price AS
 SELECT s.company_id, s.security_id, s.market, s.symbol, s.security_type, s.currency,
        p.trade_date,
@@ -224,7 +235,6 @@ WHERE p.trade_date = (
 );
 
 -- One row per company: all listings concatenated, for multi-market display.
-DROP VIEW IF EXISTS v_company_overview;
 CREATE VIEW v_company_overview AS
 SELECT c.company_id, c.name, c.local_name, c.country, c.sector, c.industry,
        c.cik, c.corp_code, c.isin,
@@ -536,7 +546,6 @@ CREATE TABLE IF NOT EXISTS law_api_raw (
 
 -- Accounting-correct USD-converted financials --------------------------------
 -- IS/CF (flows) -> period-average rate; BS (stocks) -> nearest-prior spot at period_end.
-DROP VIEW IF EXISTS v_financials_usd;
 CREATE VIEW v_financials_usd AS
 SELECT f.company_id, f.fiscal_year, f.fiscal_period, f.fs_scope, f.statement_type,
        f.account, f.account_local, f.value AS value_local, f.currency, f.period_end, f.source,
@@ -561,7 +570,6 @@ FROM financials f;
 -- by editing this view alone — no re-fetching, and several definitions can coexist.
 
 -- One row per 변동 line, with side and holder bucket derived from DART's codes.
-DROP VIEW IF EXISTS v_kr_stake_sales;
 CREATE VIEW v_kr_stake_sales AS
 SELECT
     s.company_id, s.rcept_no, s.change_date, s.holder_name, s.holder_id,
@@ -602,7 +610,6 @@ FROM kr_stake_changes s;
 -- Deal-level rollup. A block deal shows up as several 특별관계자 selling on the
 -- same date under one 접수번호, so the deal grain is (rcept_no, change_date, side),
 -- not the individual holder line.
-DROP VIEW IF EXISTS v_kr_stake_deals;
 CREATE VIEW v_kr_stake_deals AS
 SELECT
     v.company_id, v.rcept_no, v.change_date, v.side, v.venue,
@@ -619,7 +626,6 @@ GROUP BY v.company_id, v.rcept_no, v.change_date, v.side, v.venue;
 -- priced against that day's close (nearest prior, for a non-trading change_date);
 -- 자기주식처분 carries its own execution price and is checked against the market
 -- directly, which is what surfaces a discount typical of a negotiated placement.
-DROP VIEW IF EXISTS v_kr_treasury_price_check;
 CREATE VIEW v_kr_treasury_price_check AS
 SELECT
     t.company_id, t.rcept_no, t.report_date, t.report_kind,
