@@ -1,7 +1,13 @@
 """Offline tests for the Extension-B/C coverage layer and correctness fixes."""
 
 from issuer_data.config import Settings
-from issuer_data.models import Company, FinancialFact, InsiderTrade, Security
+from issuer_data.models import (
+    Company,
+    DailyMetric,
+    FinancialFact,
+    InsiderTrade,
+    Security,
+)
 from issuer_data.orchestrator import Orchestrator
 from issuer_data.services import _latest_metric
 from issuer_data.storage.repository import Repository
@@ -33,6 +39,55 @@ def test_insider_idempotent_and_multi_txn(conn):
     repo.upsert_coverage("insider_trades", "company", rows)
     repo.commit()
     assert conn.execute("SELECT COUNT(*) FROM insider_trades").fetchone()[0] == 3
+
+
+def test_recollecting_a_row_updates_its_values(conn):
+    """A second collection of the same key must refresh the row, not skip it.
+
+    The upsert is one generic statement shared by every coverage table, so the
+    conflict clause is written once and applies to all of them. Getting it
+    wrong in the direction of "leave the existing row alone" is invisible: the
+    row count stays right, nothing errors, and every re-collection quietly
+    keeps the first value it ever saw. Counting rows cannot see that, so this
+    asserts on a value.
+    """
+    repo = Repository(conn)
+    _company(repo)
+
+    def _trade(shares, price):
+        return InsiderTrade(symbol="ACME", market="US", filed_date="2024-11-07",
+                            insider="DOE JANE", txn_type="sell", txn_seq=0,
+                            shares=shares, price=price, filing_id="acc1", source="edgar")
+
+    repo.upsert_coverage("insider_trades", "company", [_trade(100, 10.0)])
+    repo.commit()
+    # Same primary key, restated figures — what an amended filing looks like.
+    repo.upsert_coverage("insider_trades", "company", [_trade(250, 12.5)])
+    repo.commit()
+
+    rows = conn.execute("SELECT shares, price FROM insider_trades").fetchall()
+    assert len(rows) == 1, "the restated row should replace, not accumulate"
+    assert rows[0]["shares"] == 250, "re-collection left a stale value behind"
+    assert rows[0]["price"] == 12.5
+
+
+def test_recollecting_a_security_grain_row_updates_its_values(conn):
+    """The same guarantee on the security-grain branch of the upsert."""
+    repo = Repository(conn)
+    _company(repo)
+
+    def _metric(foreign_own_pct):
+        return DailyMetric(symbol="ACME", market="US", metric_date="2026-01-05",
+                           foreign_own_pct=foreign_own_pct, source="krx")
+
+    repo.upsert_coverage("daily_metrics", "security", [_metric(51.2)])
+    repo.commit()
+    repo.upsert_coverage("daily_metrics", "security", [_metric(48.7)])
+    repo.commit()
+
+    rows = conn.execute("SELECT foreign_own_pct FROM daily_metrics").fetchall()
+    assert len(rows) == 1
+    assert rows[0]["foreign_own_pct"] == 48.7, "re-collection left a stale value behind"
 
 
 def test_latest_metric_prefers_cfs_fy(conn):
