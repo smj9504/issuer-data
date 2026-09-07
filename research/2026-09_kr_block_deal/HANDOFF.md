@@ -53,13 +53,23 @@ python -m issuer_data status
 python -m issuer_data query --sql "SELECT status, COUNT(*) FROM scan_progress GROUP BY status"
 ```
 
-비용 추정: 종목당 평균 5.75회(대형주 8종목 실측, 표본이 대형주라 **상한값**),
+비용 추정: 종목당 평균 5.75회(대형주 8종목 실측 — **참고치이지 상한이 아니다**),
 전 종목 1년치 → OpenDART 일일 한도 20,000회 기준 **이틀**.
 
 종목 수는 **3,988개**다 (2026-09-04, DART corp_codes 중 6자리 종목코드 보유 법인 실측).
 이 문서가 원래 쓴 ≈2,600은 과소치였다. 3,988 × 5.75 ≈ 22,900회 — 이틀인 것은 같지만
-둘째 날 여유가 거의 없다. 다만 5.75가 대형주 표본 상한이라 실제로는 더 낮을 여지가 있다
-(중소형주는 대량보유 공시가 적다).
+둘째 날 여유가 거의 없다.
+
+5.75를 상한으로 믿지 말 것. 호출 수를 정하는 것은 시총이 아니라 대량보유 보고서
+건수이고, 표본 8종목이 전부 대형주라 중소형주 중앙값이 더 낮다는 근거는 이 표본에
+없다. 실제 분포는 스윕이 돌기 시작하면 `scan_progress.api_calls`에 쌓이므로 몇백
+종목 시점에 아래로 확인하고 예산을 다시 잡는다:
+
+```sql
+SELECT COUNT(*) n, AVG(api_calls), MIN(api_calls), MAX(api_calls),
+       PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY api_calls) AS median
+FROM scan_progress WHERE data_type='stake' AND status='done';
+```
 
 `corp_code`는 추가 호출을 만들지 않는다. `dart.list(symbol, ...)`이 내부에서
 `find_corp_code`를 부르지만 그건 캐시된 DataFrame 조회이고, 과금되는 호출은
