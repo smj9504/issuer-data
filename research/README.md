@@ -9,8 +9,10 @@ README for the short version of this triage rule.
 ## Triage: where does a new question go?
 
 1. **Already-collected data** — no new fetching needed. Use
-   `issuer-data query --sql ...` or read `data/issuer_data.sqlite` with
-   pandas directly. Nothing to add here.
+   `issuer-data query --sql ...` or connect to the database at `ISSUER_DB_DSN`
+   (PostgreSQL) with pandas directly. Nothing to add here. The stale
+   `data/issuer_data.sqlite` on disk predates the move and is not the live
+   database.
 2. **One-off research** — new data, unlikely to be asked again in this shape.
    → a task folder in this directory (see below).
 3. **Reusable collection** — the same source/shape will clearly be queried
