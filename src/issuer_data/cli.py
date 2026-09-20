@@ -400,26 +400,48 @@ def cmd_check_db(args) -> int:
             print("           (a sweep makes one round trip per symbol; a far "
                   "region will show here)")
 
-        schema = conn.execute(
-            "SELECT value FROM schema_meta WHERE key = 'schema_version'"
-        ).fetchone()
+        # A database that missed init-db has no schema_meta at all, which is a
+        # normal thing to run this command against -- it is how you find out.
+        # The failed SELECT aborts the transaction, so roll back before asking
+        # anything else, or every later query dies with InFailedSqlTransaction.
+        try:
+            schema = conn.execute(
+                "SELECT value FROM schema_meta WHERE key = 'schema_version'"
+            ).fetchone()
+        except psycopg.Error:
+            conn.rollback()
+            schema = None
         print(f"Schema     {schema['value'] if schema else 'MISSING -- run init-db'}")
 
         writable = conn.execute("SHOW transaction_read_only").fetchone()[0] != "on"
         print(f"Role       {info.user}   writes: {'yes' if writable else 'no (read-only)'}")
 
-        counts = conn.execute(
-            "SELECT (SELECT count(*) FROM securities WHERE market='KR') AS kr,"
-            "       (SELECT count(*) FROM kr_stake_changes)             AS stake,"
-            "       (SELECT count(*) FROM scan_progress)                AS cursor"
-        ).fetchone()
-        print(f"Data       KR securities {counts['kr']}, stake rows {counts['stake']}, "
-              f"cursor {counts['cursor']}")
-        if counts["kr"] < 100:
-            print("           (a full sweep needs the master first: "
-                  "collect --market kr --type master --source dart)")
+        # Same story: the counts read three tables init-db creates.
+        try:
+            counts = conn.execute(
+                "SELECT (SELECT count(*) FROM securities WHERE market='KR') AS kr,"
+                "       (SELECT count(*) FROM kr_stake_changes)             AS stake,"
+                "       (SELECT count(*) FROM scan_progress)                AS cursor"
+            ).fetchone()
+        except psycopg.Error:
+            conn.rollback()
+            counts = None
+        if counts is None:
+            print("Data       -- (no tables yet)")
+        else:
+            print(f"Data       KR securities {counts['kr']}, stake rows {counts['stake']}, "
+                  f"cursor {counts['cursor']}")
+            if counts["kr"] < 100:
+                print("           (a full sweep needs the master first: "
+                      "collect --market kr --type master --source dart)")
     finally:
         conn.close()
+    # A database with no schema is reachable but not ready, and a sweep started
+    # against it would fail on its first write. Report that as failure, so a
+    # script gating on this command stops here rather than pressing on.
+    if schema is None:
+        print("NOT READY  run init-db to create the schema")
+        return 1
     return 0
 
 
