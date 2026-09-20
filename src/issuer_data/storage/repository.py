@@ -369,14 +369,28 @@ class Repository:
         return n
 
     # --------------------------------------------------------------------- peers
-    def upsert_peer(self, company_id: int, peer_company_id: int, relation: str, source: str) -> None:
+    def upsert_peer(self, company_id: int, peer_company_id: int, relation: str,
+                    source: str, *, direction: int | None = None,
+                    weight: float | None = None, evidence: str | None = None) -> None:
         if company_id == peer_company_id:
             return
         self._exec(
-            "INSERT INTO company_peers(company_id, peer_company_id, relation, source) "
-            "VALUES (%s,%s,%s,%s) "
-            "ON CONFLICT (company_id, peer_company_id, source) DO NOTHING",
-            (company_id, peer_company_id, relation, source),
+            # relation is part of the conflict target, so a pair that is both a
+            # competitor and a customer keeps both edges; keyed on the pair
+            # alone, the second one used to be dropped here without a word.
+            #
+            # DO UPDATE, not DO NOTHING: re-scoring an edge is the point, and a
+            # no-op would pin it to whatever was written first. COALESCE keeps a
+            # direction/weight/evidence the incoming row does not carry, so a
+            # classification sweep that knows none of the three cannot blank a
+            # hand-scored edge by running over it.
+            "INSERT INTO company_peers(company_id, peer_company_id, relation, "
+            "direction, weight, evidence, source) VALUES (%s,%s,%s,%s,%s,%s,%s) "
+            "ON CONFLICT (company_id, peer_company_id, relation, source) DO UPDATE SET "
+            "direction=COALESCE(EXCLUDED.direction, company_peers.direction), "
+            "weight=COALESCE(EXCLUDED.weight, company_peers.weight), "
+            "evidence=COALESCE(EXCLUDED.evidence, company_peers.evidence)",
+            (company_id, peer_company_id, relation, direction, weight, evidence, source),
         )
 
     # -------------------------------------------------------------- statutes

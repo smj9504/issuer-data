@@ -134,7 +134,14 @@ def _fetch_ccy_to_usd(client: HttpClient, ccy: str, start: str, end: str) -> lis
 
 # ------------------------------------------------------------------------ peers
 def collect_peers(repo: Repository, settings: Settings, market: str, symbols: list[str] | None) -> int:
-    """Collect peer relationships via FMP for the given symbols (or all in market)."""
+    """Collect peer relationships via FMP for the given symbols (or all in market).
+
+    These land unscored -- `direction` and `weight` stay NULL -- because FMP's
+    list is a classification lookup (same country, same industry, near market
+    cap), not a claim about how a move travels. For 005930.KS it returns LG
+    Corp and Anam Electronics and no SK hynix, so an edge from here is a
+    candidate to judge, not a judgement.
+    """
     try:
         fmp = build_collector("fmp", settings)
     except NotSupportedError as exc:

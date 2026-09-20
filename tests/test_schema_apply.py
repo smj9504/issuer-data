@@ -129,3 +129,63 @@ def test_a_remote_dsn_gets_a_verified_connection(dsn, expected):
 
 def test_the_password_never_reaches_a_log_line():
     assert "hunter2" not in redact("postgresql://u:hunter2@db.example.com:5432/x")
+
+
+def test_an_old_peer_key_is_carried_across(_pg_dsn):
+    """init-db upgrades a database whose company_peers predates `relation`.
+
+    The SQLite build this replaced could not alter a key, so the answer there
+    was a rebuild; Postgres does it in place, and the guard reads the live key's
+    columns rather than a version string, so it is a no-op the second time.
+    """
+    init_db(_pg_dsn)
+    with connect(_pg_dsn) as setup:
+        setup.execute("TRUNCATE company_peers")
+        # Put the table back the way it was before the impact graph.
+        setup.execute("ALTER TABLE company_peers DROP CONSTRAINT company_peers_pkey")
+        setup.execute("ALTER TABLE company_peers DROP COLUMN direction, "
+                      "DROP COLUMN weight, DROP COLUMN evidence")
+        setup.execute("ALTER TABLE company_peers ALTER COLUMN relation DROP NOT NULL")
+        setup.execute("ALTER TABLE company_peers "
+                      "ADD PRIMARY KEY (company_id, peer_company_id, source)")
+        setup.execute("INSERT INTO companies(company_id, name, source) "
+                      "VALUES (901, 'A', 'fmp'), (902, 'B', 'fmp')")
+        # A row from the old world, carrying no relation at all.
+        setup.execute("INSERT INTO company_peers(company_id, peer_company_id, source) "
+                      "VALUES (901, 902, 'fmp')")
+        setup.commit()
+
+    init_db(_pg_dsn)
+
+    with connect(_pg_dsn) as conn:
+        key = conn.execute(
+            "SELECT a.attname FROM pg_constraint con "
+            "JOIN pg_attribute a ON a.attrelid = con.conrelid "
+            "AND a.attnum = ANY(con.conkey) "
+            "WHERE con.conrelid = 'company_peers'::regclass AND con.contype = 'p' "
+            "ORDER BY a.attname"
+        ).fetchall()
+        assert [r["attname"] for r in key] == [
+            "company_id", "peer_company_id", "relation", "source"]
+        kept = conn.execute("SELECT relation, weight FROM company_peers").fetchone()
+        # The row survives; a key column cannot be NULL, so it says what it is.
+        assert (kept["relation"], kept["weight"]) == ("unknown", None)
+        # The upgraded table has to be the same shape as a fresh one, not just
+        # the same columns: ADD COLUMN IF NOT EXISTS attaches no constraint, so
+        # without re-adding them by name the checks would exist only on a
+        # database that had never been upgraded.
+        checks = conn.execute(
+            "SELECT conname FROM pg_constraint "
+            "WHERE conrelid = 'company_peers'::regclass AND contype = 'c' "
+            "ORDER BY conname"
+        ).fetchall()
+        assert [r["conname"] for r in checks] == [
+            "company_peers_direction_check", "company_peers_weight_check"]
+
+    init_db(_pg_dsn)  # the guard must no-op now that the key is the new one
+    with connect(_pg_dsn) as conn:
+        n = conn.execute("SELECT count(*) AS n FROM company_peers").fetchone()["n"]
+        assert n == 1
+    with connect(_pg_dsn) as cleanup:
+        cleanup.execute("DELETE FROM companies WHERE company_id IN (901, 902)")
+        cleanup.commit()
