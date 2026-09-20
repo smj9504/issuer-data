@@ -1,6 +1,6 @@
 """Optional paid escalation for low-confidence PDF tables.
 
-The local structured engine (`pdf_extract.py`) grounds every extracted number
+The local structured engine (`pdf/extract.py`) grounds every extracted number
 against the raw text layer and yields a per-table confidence. Escalation takes
 ONLY the tables below a confidence threshold and asks a stronger (paid) engine to
 reconstruct them — never the whole corpus, keeping cost proportional to the
@@ -27,9 +27,9 @@ import json
 import re
 from typing import Protocol, runtime_checkable
 
-from .config import Settings
-from .http.client import HttpClient
-from .logging import get_logger
+from ...config import Settings
+from ...http.client import HttpClient
+from ...logging import get_logger
 
 log = get_logger(__name__)
 

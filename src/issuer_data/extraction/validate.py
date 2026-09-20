@@ -5,7 +5,7 @@ can be detected without one. Three checks here need no ground truth at all, so
 they run on every document:
 
 - **Coverage** — what fraction of the page's own content survived into the output.
-  ``ground_numbers`` (pdf_extract) asks "did we invent a number?"; it cannot ask
+  ``ground_numbers`` (pdf.extract) asks "did we invent a number?"; it cannot ask
   "did we drop half the table?", because a locally-read table always grounds at
   1.0 — its digits come from the same text layer. Coverage is the other half of
   that question and catches the silent-loss failures grounding is blind to.
@@ -15,7 +15,7 @@ they run on every document:
   immediately. This is real evidence, not a heuristic.
 - **Required fields** — "was this PDF parsed correctly" is unbounded; "did we get
   the fields we came for, each with a page to look at" is answerable. Enforced
-  only when the caller supplies a schema (see ``pdf_fields``).
+  only when the caller supplies a schema (see ``fields``).
 
 The three fold into one document verdict — PASS / REVIEW / FAIL — because a
 silent success is the failure mode that costs the most: a document that yields
@@ -33,8 +33,8 @@ import re
 from collections import Counter
 from dataclasses import dataclass, field
 
-from .logging import get_logger
-from .pdf_extract import content_lines
+from ..logging import get_logger
+from .pdf.extract import content_lines
 
 log = get_logger(__name__)
 
@@ -438,7 +438,7 @@ def validate(pages, text, tables, *, thresholds: Thresholds | None = None,
     report.crosscheck = crosscheck
 
     if field_specs:
-        from .pdf_fields import extract_fields
+        from .fields import extract_fields
 
         report.fields = extract_fields(text, tables, field_specs)
         report.missing_fields = [s.name for s in field_specs

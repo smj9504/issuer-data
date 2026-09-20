@@ -4,13 +4,13 @@ For each case the extracted tables are matched to the gold tables (each gold
 table paired to the predicted table with the highest TEDS), then TEDS / GriTS /
 numeric-EM are averaged over gold tables and paragraph-continuity is scored on
 the reflowed text. Results aggregate per category and overall. Passing an
-``escalator`` (see ``pdf_escalate``) reports the escalated-table count and
+``escalator`` (see ``pdf.escalate``) reports the escalated-table count and
 estimated cost alongside the scores, so accuracy lift can be measured against cost.
 """
 
 from __future__ import annotations
 
-from ..pdf_extract import extract_structured
+from ..extraction.pdf.extract import extract_structured
 from . import metrics
 from .gold import GoldCase, load_gold_dir, synthetic_cases
 
@@ -37,8 +37,8 @@ def score_case(case: GoldCase, *, escalator=None, threshold: float = 0.66,
     sdoc = extract_structured(case.pdf_bytes, escalator=escalator, threshold=threshold,
                               cost_per_page=cost_per_page)
     if agreement:
-        from ..pdf_agreement import agreement as run_agreement
-        from ..pdf_validate import decide
+        from ..extraction.pdf.agreement import agreement as run_agreement
+        from ..extraction.validate import decide
 
         consensus = run_agreement(case.pdf_bytes, reference=sdoc.tables)
         if sdoc.validation is not None:

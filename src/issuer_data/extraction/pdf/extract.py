@@ -28,7 +28,7 @@ import io
 import re
 from dataclasses import dataclass, field
 
-from .logging import get_logger
+from ...logging import get_logger
 
 log = get_logger(__name__)
 
@@ -57,7 +57,7 @@ class StructuredDoc:
     # Per-page text, kept so an extracted field can name the page it came from —
     # a reviewer needs somewhere to look, not just a value.
     page_text: dict[int, str] = field(default_factory=dict)
-    # Reference-free verdict (see pdf_validate). None when validation was skipped.
+    # Reference-free verdict (see validate). None when validation was skipped.
     validation: object | None = None
 
     @property
@@ -316,7 +316,7 @@ def content_lines(pages: list[dict], *, band: float = 0.12) -> list[tuple[int, s
 
     Everything the engine deliberately discards — running headers/footers found
     by recurrence, page-number lines — is filtered out here. Coverage
-    (``pdf_validate``) measures the output against this list rather than the raw
+    (``validate``) measures the output against this list rather than the raw
     text layer, so a header that was dropped on purpose never reads as content
     that went missing. Reflow and coverage therefore cannot drift apart: both
     start from this one definition of "content".
@@ -408,7 +408,7 @@ def _parse_pages(pdf, fallback: str | None = "column-geometry",
                     "bbox": tuple(float(v) for v in tbl.bbox),
                     # 90-degree-rotated cell text (org-chart-style labels caught
                     # inside a ruled table) reads backwards otherwise — see the
-                    # same char_dir_rotated note in pdf_columns.py.
+                    # same char_dir_rotated note in pdf/columns.py.
                     "col_x": col_x, "rows": tbl.extract(char_dir_rotated="btt"),
                 })
         except Exception as exc:  # noqa: BLE001
@@ -421,11 +421,11 @@ def _parse_pages(pdf, fallback: str | None = "column-geometry",
             # already handles cannot regress.
             try:
                 if fallback == "table-transformer":
-                    from .pdf_ml_tables import find_tatr_tables
+                    from .ml_tables import find_tatr_tables
 
                     rep["tables"].extend(find_tatr_tables(page, dpi=ml_dpi))
                 elif fallback == "column-geometry":
-                    from .pdf_columns import find_column_tables
+                    from .columns import find_column_tables
 
                     rep["tables"].extend(find_column_tables(page))
                 # fallback None: Docling supplies these pages at document level
@@ -437,7 +437,7 @@ def _parse_pages(pdf, fallback: str | None = "column-geometry",
             # together. Pages that produced a table are left alone — their gap is
             # between a label and its figures — and single-column pages come back
             # None and keep pdfplumber's own grouping.
-            from .pdf_columns import column_aware_lines
+            from .columns import column_aware_lines
 
             lines = None if rep["tables"] else column_aware_lines(page)
             if lines is None:
@@ -457,7 +457,7 @@ def _parse_pages(pdf, fallback: str | None = "column-geometry",
 # A second opinion needs a detector that does not share the first one's
 # assumptions. "lines" reads ruling lines; "text" infers the grid from where the
 # words sit, so the two fail on different documents — which is exactly what makes
-# their agreement informative (see ``pdf_agreement``).
+# their agreement informative (see ``pdf.agreement``).
 DETECTORS = {
     "lines": {"settings": None, "fallback": "column-geometry"},
     "text": {"settings": {"vertical_strategy": "text", "horizontal_strategy": "text",
@@ -467,13 +467,13 @@ DETECTORS = {
 
 
 def _ml_usable(engine: str) -> bool:
-    from .pdf_ml_tables import ml_ready
+    from .ml_tables import ml_ready
 
     return ml_ready(engine)
 
 
 def _docling_tables(content: bytes):
-    from .pdf_ml_tables import find_docling_tables
+    from .ml_tables import find_docling_tables
 
     try:
         return find_docling_tables(content)
@@ -513,7 +513,7 @@ def apply_escalation(tables: list[StitchedTable], page_text: dict[int, str], raw
     are re-grounded against the page's raw text; the local engine, which reads the
     same text layer, is already self-consistent.
     """
-    from .pdf_escalate import NullEscalator
+    from .escalate import NullEscalator
 
     use = escalator is not None and not isinstance(escalator, NullEscalator)
     escalated = 0
@@ -545,7 +545,7 @@ def extract_structured(content: bytes, escalator=None, threshold: float = 0.66,
     """Parse a PDF into stitched tables + reflowed narrative with grounding.
 
     Tables below ``threshold`` grounding confidence are flagged ``needs_review``.
-    When an ``escalator`` is given (see ``pdf_escalate``), each low-confidence
+    When an ``escalator`` is given (see ``pdf.escalate``), each low-confidence
     table is re-processed by it; on success the rows are replaced, re-grounded,
     the ``source_engine`` updated and the review flag cleared. Escalation cost is
     accounted per escalated table span.
@@ -599,7 +599,7 @@ def extract_structured(content: bytes, escalator=None, threshold: float = 0.66,
         # Runs on every document by design: the checks are pure-python and cost
         # nothing next to the parse, and a failure nobody looked for is a failure
         # nobody finds.
-        from .pdf_validate import validate as run_validation
+        from ..validate import validate as run_validation
 
         doc.validation = run_validation(pages, text, tables, field_specs=field_specs,
                                         thresholds=thresholds)

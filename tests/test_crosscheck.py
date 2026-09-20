@@ -2,8 +2,8 @@
 
 import pytest
 
-from issuer_data.crosscheck import crosscheck, load_facts
-from issuer_data.pdf_extract import StitchedTable
+from issuer_data.extraction.crosscheck import crosscheck, load_facts
+from issuer_data.extraction.pdf.extract import StitchedTable
 
 
 @pytest.fixture()

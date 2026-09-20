@@ -18,8 +18,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .eval import metrics
-from .logging import get_logger
+from ...eval import metrics
+from ...logging import get_logger
 
 log = get_logger(__name__)
 
@@ -110,7 +110,7 @@ def agreement(content: bytes, *, reference=None, other_detector: str = "text",
     ``needs_review`` in place — disagreement is routed to a human the same way a
     low confidence is.
     """
-    from .pdf_extract import extract_structured
+    from .extract import extract_structured
 
     if reference is None:
         reference = extract_structured(content, ml_engine=ml_engine, ml_dpi=ml_dpi,

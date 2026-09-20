@@ -6,7 +6,7 @@ CPU inference measured in seconds per page rather than milliseconds. That is why
 they are an opt-in tier (`pip install '.[ml]'`, `--ml-tables`) rather than the
 default, and why nothing here is imported until it is actually asked for.
 
-Where they sit: `pdf_extract` tries ruling lines first (cheap, exact when the
+Where they sit: `pdf.extract` tries ruling lines first (cheap, exact when the
 document draws them). On pages with no ruled table it falls back to the
 whitespace-geometry pass, or — when this tier is on — to one of these models
 instead. The text still comes from the PDF's own text layer; the model is asked
@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from .logging import get_logger
+from ...logging import get_logger
 
 log = get_logger(__name__)
 

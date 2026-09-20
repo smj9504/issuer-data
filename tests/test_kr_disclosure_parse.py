@@ -9,7 +9,7 @@ FI-vs-대주주 classification depends on. That regression is pinned below.
 import pytest
 from conftest import new_db
 
-from issuer_data.kr_disclosure_parse import (
+from issuer_data.collectors.kr_disclosure_parse import (
     HLD_MTH,
     parse_holder_roster,
     parse_report_meta,

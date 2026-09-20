@@ -197,7 +197,7 @@ class DartCollector(BaseCollector):
     # ------------------------------------------------- 원문 기반 지분 변동/자사주
     def _document_xml(self, rcept_no: str) -> str | None:
         """Fetch and decode one filing's 원문 (document.xml returns a ZIP)."""
-        from ..kr_disclosure_parse import unzip_document
+        from .kr_disclosure_parse import unzip_document
 
         self._spend()
         try:
@@ -220,8 +220,8 @@ class DartCollector(BaseCollector):
         is filed under a new 접수번호), so re-opening one buys nothing and, on a
         market-wide sweep, is the single largest avoidable source of calls.
         """
-        from ..kr_disclosure_parse import parse_report_meta, parse_stake_changes
         from ..models import StakeChange
+        from .kr_disclosure_parse import parse_report_meta, parse_stake_changes
 
         out: list[StakeChange] = []
         for filing in self.fetch_filings(symbol, start, end, kind="D"):
@@ -244,8 +244,8 @@ class DartCollector(BaseCollector):
 
     def fetch_treasury_disposals(self, symbol: str, start: str, end: str):
         """자기주식 취득/처분 결정 and 결과보고서 (주요사항보고 B)."""
-        from ..kr_disclosure_parse import parse_treasury_disposal
         from ..models import TreasuryDisposal
+        from .kr_disclosure_parse import parse_treasury_disposal
 
         out: list[TreasuryDisposal] = []
         for filing in self.fetch_filings(symbol, start, end, kind="B"):

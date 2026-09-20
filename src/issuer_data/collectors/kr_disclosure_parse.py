@@ -21,7 +21,7 @@ import io
 import re
 import zipfile
 
-from .logging import get_logger
+from ..logging import get_logger
 
 log = get_logger(__name__)
 

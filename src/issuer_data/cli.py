@@ -507,17 +507,17 @@ def cmd_validate(args) -> int:
     from pathlib import Path
 
     from .documents import validation_thresholds
-    from .pdf_extract import extract_structured
+    from .extraction.pdf.extract import extract_structured
 
     settings = get_settings()
     content = Path(args.file).read_bytes()
     specs = None
     if args.fields:
-        from .pdf_fields import load_specs
+        from .extraction.fields import load_specs
 
         specs = load_specs(args.fields)
     elif args.default_fields:
-        from .pdf_fields import DEFAULT_SPECS
+        from .extraction.fields import DEFAULT_SPECS
 
         specs = DEFAULT_SPECS
     if getattr(args, "ml_engine", None):
@@ -532,8 +532,8 @@ def cmd_validate(args) -> int:
     )
     report = doc.validation
     if args.agreement:
-        from .pdf_agreement import agreement as run_agreement
-        from .pdf_validate import decide
+        from .extraction.pdf.agreement import agreement as run_agreement
+        from .extraction.validate import decide
 
         consensus = run_agreement(content, reference=doc.tables,
                                   flag_below=settings.pdf_agreement_min)
@@ -542,7 +542,7 @@ def cmd_validate(args) -> int:
         decide(report, validation_thresholds(settings))
     if args.crosscheck_symbol:
         report.crosscheck = _crosscheck_for(settings, args.crosscheck_symbol, doc.tables)
-        from .pdf_validate import decide
+        from .extraction.validate import decide
 
         decide(report, validation_thresholds(settings))
 
@@ -589,7 +589,7 @@ def cmd_validate(args) -> int:
 
 def _crosscheck_for(settings, symbol: str, tables) -> dict | None:
     """Cross-check a document's figures against what other sources reported."""
-    from .crosscheck import crosscheck
+    from .extraction.crosscheck import crosscheck
     from .storage.repository import Repository
 
     market, sym = (symbol.split(":", 1) if ":" in symbol else ("KR", symbol))
@@ -642,7 +642,7 @@ def cmd_eval(args) -> int:
         return 0
     escalator = None
     if args.escalate:
-        from .pdf_escalate import build_escalator
+        from .extraction.pdf.escalate import build_escalator
 
         escalator = build_escalator(settings)
     report = run_eval(cases, escalator=escalator,
@@ -796,7 +796,7 @@ def build_parser() -> argparse.ArgumentParser:
     lw.set_defaults(func=cmd_law)
     va = sub.add_parser("validate", help="check one PDF's extraction and explain the verdict")
     va.add_argument("--file", required=True, help="path to the PDF")
-    va.add_argument("--fields", help="JSON field schema to require (see pdf_fields)")
+    va.add_argument("--fields", help="JSON field schema to require (see extraction.fields)")
     va.add_argument("--default-fields", action="store_true",
                     help="look for the built-in issuer/security fields")
     va.add_argument("--agreement", action="store_true",

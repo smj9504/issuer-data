@@ -29,8 +29,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from .logging import get_logger
-from .pdf_validate import parse_number
+from ..logging import get_logger
+from .validate import parse_number
 
 log = get_logger(__name__)
 

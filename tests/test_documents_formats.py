@@ -16,7 +16,7 @@ import pytest
 from issuer_data import documents
 from issuer_data.config import Settings
 from issuer_data.documents import _filename_from, _format_from, extract_text, sniff_format
-from issuer_data.hwp_extract import is_hwp5, is_hwpx
+from issuer_data.extraction.hwp import is_hwp5, is_hwpx
 from issuer_data.models import Company, Filing, Security
 from issuer_data.storage.repository import Repository
 

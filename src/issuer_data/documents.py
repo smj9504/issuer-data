@@ -1,7 +1,7 @@
 """Download original filing documents and extract their body text.
 
 Formats: PDF (pdfplumber), HTML/XML (BeautifulSoup+lxml), 한글 HWP 5.x and HWPX
-(hwp_extract), archives (recursively, by content), plain text.
+(extraction.hwp), archives (recursively, by content), plain text.
 
 The format is decided by sniffing the bytes, never by the URL or the declared
 Content-Type: DART serves a ZIP from a URL ending in `.xml` under a Content-Type
@@ -77,7 +77,7 @@ _MAGIC: tuple[tuple[bytes, str], ...] = (
 
 def sniff_format(content: bytes) -> str | None:
     """Identify `content` by its leading bytes, or None if nothing matches."""
-    from .hwp_extract import is_hwp5, is_hwpx
+    from .extraction.hwp import is_hwp5, is_hwpx
 
     for magic, fmt in _MAGIC:
         if not content.startswith(magic):
@@ -145,7 +145,7 @@ def _filename_from(url: str, doc_seq: int, fmt: str) -> str:
 
 # ------------------------------------------------------------------ extraction
 def extract_text(content: bytes, fmt: str, depth: int = 0) -> str | None:
-    from .hwp_extract import hwp5_text, hwpx_text
+    from .extraction.hwp import hwp5_text, hwpx_text
 
     try:
         if fmt == "pdf":
@@ -175,7 +175,7 @@ def _pdf_page_texts(content: bytes) -> list[str]:
 
 
 def _pdf_text(content: bytes) -> str | None:
-    from .pdf_extract import reflow_pdf
+    from .extraction.pdf.extract import reflow_pdf
 
     try:
         text = reflow_pdf(content)
@@ -240,7 +240,7 @@ def _member_text(data: bytes, name: str, depth: int) -> str | None:
 # ------------------------------------------------------------------ downloading
 def validation_thresholds(settings: Settings):
     """Build the validation thresholds from settings (see ``pdf_validate``)."""
-    from .pdf_validate import Thresholds
+    from .extraction.validate import Thresholds
 
     return Thresholds(
         coverage_min=getattr(settings, "pdf_coverage_min", 0.98),
@@ -257,7 +257,7 @@ def _field_specs(settings: Settings):
     if not path:
         return None
     try:
-        from .pdf_fields import load_specs
+        from .extraction.fields import load_specs
 
         return load_specs(path)
     except Exception as exc:  # noqa: BLE001
@@ -277,8 +277,8 @@ def _record_extraction(repo, settings: Settings, company_id: int, filing_id: str
         return None
     if tables and getattr(settings, "pdf_crosscheck_enabled", True):
         try:
-            from .crosscheck import crosscheck
-            from .pdf_validate import decide
+            from .extraction.crosscheck import crosscheck
+            from .extraction.validate import decide
 
             # Exclude the filing's own source: figures parsed from this filing
             # cannot corroborate this filing.
@@ -323,8 +323,8 @@ def _download_one(
         # Structured pass: cross-page-stitched tables + reflowed narrative, with
         # optional (config-gated) escalation of the low-confidence tail.
         try:
-            from .pdf_escalate import build_escalator
-            from .pdf_extract import extract_structured
+            from .extraction.pdf.escalate import build_escalator
+            from .extraction.pdf.extract import extract_structured
 
             escalator = build_escalator(settings)
             doc = extract_structured(
@@ -346,8 +346,8 @@ def _download_one(
             if report is not None and getattr(settings, "pdf_agreement_enabled", False):
                 # A second, independent detector on the same bytes. Expensive, so
                 # it is off by default and meant for sampling.
-                from .pdf_agreement import agreement as _agreement
-                from .pdf_validate import decide as _decide
+                from .extraction.pdf.agreement import agreement as _agreement
+                from .extraction.validate import decide as _decide
 
                 consensus = _agreement(content, reference=tables,
                                        flag_below=settings.pdf_agreement_min)
@@ -393,8 +393,8 @@ def _ocr_pages_without_text(content: bytes, text: str | None,
     is reflowed, so an OCR'd page takes part in paragraph merging and header
     stripping exactly like the pages around it.
     """
-    from .pdf_extract import parse_pdf_pages, reflow_narrative
-    from .pdf_ocr import ocr_pages, ocr_ready
+    from .extraction.pdf.extract import parse_pdf_pages, reflow_narrative
+    from .extraction.pdf.ocr import ocr_pages, ocr_ready
 
     try:
         pages = parse_pdf_pages(content, fallback=None)

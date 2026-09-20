@@ -23,7 +23,7 @@ import struct
 import zipfile
 import zlib
 
-from .logging import get_logger
+from ..logging import get_logger
 
 log = get_logger(__name__)
 
@@ -118,7 +118,7 @@ def hwp5_text(content: bytes) -> str | None:
 
 def hwpx_text(content: bytes) -> str | None:
     """Body text of an HWPX package: the section XML members, in order."""
-    from .documents import markup_text
+    from ..documents import markup_text
 
     parts: list[str] = []
     with zipfile.ZipFile(io.BytesIO(content)) as zf:

@@ -61,7 +61,7 @@ def find_column_tables(page, *, min_rows: int = MIN_ROWS, min_cols: int = MIN_CO
     # _split_cells below assume top=row, x=column, which is backwards for
     # these words — so their coordinates are rotated back into that frame
     # first. bbox/col_x are rotated forward again before returning, so callers
-    # (pdf_extract.py) keep seeing this page's real coordinate system.
+    # (pdf/extract.py) keep seeing this page's real coordinate system.
     rotated = sum(1 for w in words if not w.get("upright", True)) > len(words) / 2
     if rotated:
         words = [_unrotate_word(w, page.height) for w in words]

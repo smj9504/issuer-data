@@ -7,8 +7,8 @@ returned nothing for exactly the documents whose numbers matter most.
 
 import pytest
 
-from issuer_data.pdf_columns import find_column_tables
-from issuer_data.pdf_extract import extract_structured
+from issuer_data.extraction.pdf.columns import find_column_tables
+from issuer_data.extraction.pdf.extract import extract_structured
 
 pymupdf = pytest.importorskip("pymupdf")
 pdfplumber = pytest.importorskip("pdfplumber")
@@ -189,7 +189,7 @@ _RIGHT = [f"RIGHT sentence {i} of the right column." for i in range(5)]
 
 def test_columns_are_read_one_after_the_other():
     """pdfplumber groups by y, so the two columns arrive welded line by line."""
-    from issuer_data.pdf_columns import column_aware_lines
+    from issuer_data.extraction.pdf.columns import column_aware_lines
 
     content = _two_column_pdf("CHAIRMAN STATEMENT spanning the whole measure", _LEFT, _RIGHT)
     welded = first_page(content).extract_text_lines(strip=True)
@@ -202,7 +202,7 @@ def test_columns_are_read_one_after_the_other():
 
 
 def test_spanning_heading_stays_above_its_columns():
-    from issuer_data.pdf_columns import column_aware_lines
+    from issuer_data.extraction.pdf.columns import column_aware_lines
 
     content = _two_column_pdf("CHAIRMAN STATEMENT spanning the whole measure", _LEFT, _RIGHT)
     texts = [ln["text"] for ln in column_aware_lines(first_page(content))]
@@ -211,7 +211,7 @@ def test_spanning_heading_stays_above_its_columns():
 
 def test_single_column_page_is_left_to_pdfplumber():
     """Returning None keeps ordinary documents on the original line grouping."""
-    from issuer_data.pdf_columns import column_aware_lines
+    from issuer_data.extraction.pdf.columns import column_aware_lines
 
     rows = [[(60, f"A single column line number {i} of running prose.")] for i in range(8)]
     assert column_aware_lines(first_page(make_pdf(rows))) is None
@@ -219,7 +219,7 @@ def test_single_column_page_is_left_to_pdfplumber():
 
 def test_a_tables_label_gap_is_not_a_column_gutter():
     """A financial statement has a wide gap too; reordering it tears rows apart."""
-    from issuer_data.pdf_columns import column_aware_lines
+    from issuer_data.extraction.pdf.columns import column_aware_lines
 
     assert column_aware_lines(first_page(_financial_pdf())) is None
 
@@ -290,7 +290,7 @@ def test_upright_tables_unaffected_by_rotation_fix():
 
 
 def test_extract_structured_reads_rotated_narrative_in_order():
-    from issuer_data.pdf_extract import extract_structured
+    from issuer_data.extraction.pdf.extract import extract_structured
 
     doc = pymupdf.open()
     page = doc.new_page(width=560, height=400)

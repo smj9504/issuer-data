@@ -8,7 +8,7 @@ from functools import cache
 
 import pytest
 
-from issuer_data.pdf_ocr import ocr_available, ocr_pdf
+from issuer_data.extraction.pdf.ocr import ocr_available, ocr_pdf
 
 # Rendering the test images needs a scalable font — any of them. Naming specific
 # files skipped these tests everywhere the names did not match: two DejaVu paths
@@ -157,7 +157,7 @@ def test_missing_engine_warns_once_with_install_instructions(caplog, monkeypatch
     """Enabled-by-default OCR that cannot run must say so — once, not per page."""
     import logging
 
-    from issuer_data import pdf_ocr
+    from issuer_data.extraction.pdf import ocr as pdf_ocr
 
     pdf_ocr.ocr_ready.cache_clear()
     monkeypatch.setattr(pdf_ocr, "ocr_available", lambda: False)
@@ -219,7 +219,7 @@ def test_a_chart_page_inside_a_text_pdf_is_not_silently_dropped():
 def test_pages_with_text_are_not_re_ocred():
     if not ocr_available():
         pytest.skip("Tesseract/PyMuPDF not installed")
-    from issuer_data.pdf_ocr import ocr_pages
+    from issuer_data.extraction.pdf.ocr import ocr_pages
 
     pdf = _mixed_pdf("Page one prose.", ["ONLY IMAGE 4242"], "Page three prose.")
     recovered = ocr_pages(pdf, languages="eng", dpi=150, only={1})
@@ -236,7 +236,7 @@ def test_text_less_pages_are_reported_when_ocr_is_unavailable(caplog, monkeypatc
     from issuer_data.config import Settings
 
     pdf = _mixed_pdf("Before.", ["HIDDEN 777"], "After.")
-    monkeypatch.setattr("issuer_data.pdf_ocr.ocr_ready", lambda: False)
+    monkeypatch.setattr("issuer_data.extraction.pdf.ocr.ocr_ready", lambda: False)
     with caplog.at_level(logging.WARNING):
         documents._ocr_pages_without_text(pdf, "Before.\nAfter.",
                                           Settings(_env_file=None), "http://x/m.pdf")

@@ -9,8 +9,8 @@ import json
 import pytest
 
 from issuer_data.eval.harness import gate_calibration
-from issuer_data.pdf_extract import StitchedTable
-from issuer_data.pdf_validate import validate
+from issuer_data.extraction.pdf.extract import StitchedTable
+from issuer_data.extraction.validate import validate
 from issuer_data.storage.repository import Repository
 
 
