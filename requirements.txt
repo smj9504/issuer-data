@@ -1,5 +1,7 @@
 # Runtime dependencies (mirror of pyproject.toml [project.dependencies])
-psycopg[binary,pool]>=3.1  # PostgreSQL driver; pool re-checks a dropped connection
+# PostgreSQL driver. The `pool` extra is installed but nothing imports it yet;
+# what keeps a long sweep's connection alive is the TCP keepalives in storage/db.py.
+psycopg[binary,pool]>=3.1
 pandas>=2.2.2          # 2.2.2 dropped the numpy<2 cap that pykrx's numpy>=2 hits
 requests>=2.32
 pydantic>=2.7

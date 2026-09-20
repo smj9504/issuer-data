@@ -1,4 +1,4 @@
-"""Repository: all SQLite reads/writes. Resolves symbols to company/security ids."""
+"""Repository: all PostgreSQL reads/writes. Resolves symbols to company/security ids."""
 
 from __future__ import annotations
 
