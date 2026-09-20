@@ -47,14 +47,18 @@ def enrich_leis(repo: Repository, settings: Settings, symbols: list[str] | None,
           "WHERE c.lei IS NULL AND c.name IS NOT NULL"
     params: list = []
     if market:
-        sql += " AND s.market=?"
+        sql += " AND s.market=%s"
         params.append(market.upper())
     if symbols:
         from ..utils.symbols import normalize_symbol
 
         norm = [normalize_symbol(market or "US", s) for s in symbols]
-        sql += " AND s.symbol IN (%s)" % ",".join("?" * len(norm))
-        params += norm
+        # = ANY over the list, like documents.py: one parameter, nothing to
+        # miscount. The IN-list this replaces built its placeholders with a %
+        # format whose own output was %s -- two meanings of % in one line, in a
+        # string psycopg then reads for a third.
+        sql += " AND s.symbol = ANY(%s)"
+        params.append(norm)
     rows = repo.conn.execute(sql, tuple(params)).fetchall()
     n = 0
     for row in rows:
