@@ -147,14 +147,94 @@ CREATE TABLE IF NOT EXISTS fx_rates (
 );
 CREATE INDEX IF NOT EXISTS idx_fx_lookup ON fx_rates(base_ccy, quote_ccy, rate_type, rate_date);
 
--- Peer relationships for side-by-side comparison ------------------------------
+-- Impact-graph edges between companies ----------------------------------------
+-- Not only "who is comparable": the edges a piece of news travels along. A
+-- competitor's yield failure is *our* good news, so an edge that records only
+-- who is attached, and not which way its sign points, cannot answer the
+-- question a briefing exists to answer.
+--
+-- `relation` is part of the key. One pair is routinely two things at once --
+-- Samsung Electronics and SK hynix are competitors in DRAM and each other's
+-- customers elsewhere -- and while `relation` sat outside the key the second
+-- of those collided with the first and was dropped in silence.
+--
+-- `direction` is +1 when the peer's good news is good for us and -1 when it is
+-- good news for us that the peer did badly; NULL is the third state, "nobody
+-- has judged this edge yet", and is what a classification-derived peer gets.
+-- The CHECK keeps a 0 or a 2 out, because every consumer multiplies by this.
 CREATE TABLE IF NOT EXISTS company_peers (
     company_id      INTEGER NOT NULL REFERENCES companies(company_id) ON DELETE CASCADE,
     peer_company_id INTEGER NOT NULL REFERENCES companies(company_id) ON DELETE CASCADE,
-    relation        TEXT,                -- 'fmp_peer','same_sector','manual'
+    -- 'fmp_peer','same_sector','manual','competitor','supplier','customer',
+    -- 'affiliate','holding','macro_factor'
+    relation        TEXT NOT NULL,
+    direction       INTEGER
+        CONSTRAINT company_peers_direction_check CHECK (direction IN (-1, 1)),
+    weight          DOUBLE PRECISION
+        CONSTRAINT company_peers_weight_check CHECK (weight >= 0 AND weight <= 1),
+    evidence        TEXT,                -- DART rcept_no, article URL, or the quoted line
     source          TEXT NOT NULL,
-    PRIMARY KEY (company_id, peer_company_id, source)
+    PRIMARY KEY (company_id, peer_company_id, relation, source)
 );
+
+-- Carry a database created before `relation` joined the key. Postgres alters a
+-- key in place, which is exactly what the SQLite table-rebuild this replaced
+-- could not do, so init-db upgrades an existing database rather than asking for
+-- a reload. Guarded on the live key's columns, not on a schema version, so it
+-- is a no-op on a database that already has the new shape and on a fresh one.
+DO $$
+DECLARE old_pk text;
+BEGIN
+    SELECT con.conname INTO old_pk
+    FROM pg_constraint con
+    JOIN pg_class rel ON rel.oid = con.conrelid
+    JOIN pg_namespace ns ON ns.oid = rel.relnamespace
+    WHERE ns.nspname = 'public' AND rel.relname = 'company_peers'
+      AND con.contype = 'p'
+      AND NOT EXISTS (
+          SELECT 1 FROM unnest(con.conkey) AS k(attnum)
+          JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = k.attnum
+          WHERE a.attname = 'relation'
+      );
+    IF old_pk IS NOT NULL THEN
+        -- relation was nullable while it sat outside the key; a key column
+        -- cannot be, and 'unknown' says what those rows actually carry.
+        UPDATE company_peers SET relation = 'unknown' WHERE relation IS NULL;
+        ALTER TABLE company_peers ALTER COLUMN relation SET NOT NULL;
+        EXECUTE format('ALTER TABLE company_peers DROP CONSTRAINT %I', old_pk);
+        ALTER TABLE company_peers
+            ADD PRIMARY KEY (company_id, peer_company_id, relation, source);
+    END IF;
+END $$;
+
+ALTER TABLE company_peers ADD COLUMN IF NOT EXISTS direction INTEGER;
+ALTER TABLE company_peers ADD COLUMN IF NOT EXISTS weight DOUBLE PRECISION;
+ALTER TABLE company_peers ADD COLUMN IF NOT EXISTS evidence TEXT;
+
+-- A column the line above had to add arrives bare: ADD COLUMN IF NOT EXISTS
+-- carries no constraint when it fires, and skips the statement whole when the
+-- column is already there, so neither path can attach one. Adding them under
+-- their own names is what keeps an upgraded database the same shape as a fresh
+-- one -- and that sameness is the only thing the version check is asserting.
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                   WHERE conrelid = 'company_peers'::regclass
+                     AND conname = 'company_peers_direction_check') THEN
+        ALTER TABLE company_peers ADD CONSTRAINT company_peers_direction_check
+            CHECK (direction IN (-1, 1));
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                   WHERE conrelid = 'company_peers'::regclass
+                     AND conname = 'company_peers_weight_check') THEN
+        ALTER TABLE company_peers ADD CONSTRAINT company_peers_weight_check
+            CHECK (weight >= 0 AND weight <= 1);
+    END IF;
+END $$;
+
+-- The briefing's hot query runs the edge backwards: an article names a company,
+-- and the question is which watched issuers it reaches from there.
+CREATE INDEX IF NOT EXISTS idx_company_peers_peer ON company_peers(peer_company_id);
 
 -- Collection bookkeeping ------------------------------------------------------
 CREATE TABLE IF NOT EXISTS collection_runs (

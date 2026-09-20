@@ -16,7 +16,7 @@ log = get_logger(__name__)
 # have. Nothing here migrates on its own (see `connect`); the check exists so a
 # database that missed init-db says so up front instead of failing partway
 # through a collection on a table it has never heard of.
-SCHEMA_VERSION = "2026-09-04"
+SCHEMA_VERSION = "2026-09-20"
 
 
 def _read_schema() -> str:

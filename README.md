@@ -137,6 +137,12 @@ Two-tier entity model for cross-listing:
 - **`prices`**, **`financials`** (long/tidy), **`filings`**, **`filing_documents`**
   (original file + extracted text), **`filing_tables`** (structured PDF tables, one row per
   cell), **`fx_rates`**, **`company_peers`**, `collection_runs`.
+- **`company_peers`** — directed edges between companies, keyed by
+  `(company_id, peer_company_id, relation, source)`. A pair is routinely two things at
+  once (a competitor that is also a customer), so `relation` is part of the key rather
+  than a label beside it. Each edge carries `direction` (+1 when the peer's good news is
+  good for us, -1 when its bad news is, NULL when nobody has judged it), `weight` (0..1),
+  and `evidence` (a DART `rcept_no`, a URL, or the quoted line it rests on).
 - Views: **`v_latest_price`** (latest close, local + USD via nearest-prior FX),
   **`v_company_overview`** (one row per company with all its listings).
 

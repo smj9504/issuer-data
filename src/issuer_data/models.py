@@ -198,13 +198,23 @@ class FxRate(_Base):
 
 
 class Peer(_Base):
-    """A peer relationship (symbol-level; resolved to company ids at storage)."""
+    """An impact-graph edge (symbol-level; resolved to company ids at storage).
+
+    `direction` is +1 when the peer's good news is good for us and -1 when the
+    peer's bad news is; None means no one has judged this edge, which is what a
+    classification-derived peer carries. `weight` (0..1) is how much of a move
+    travels along the edge, and `evidence` is what the claim rests on -- a DART
+    rcept_no, an article URL, or the quoted line.
+    """
 
     symbol: str
     market: str
     peer_symbol: str
     peer_market: str
     relation: str = "fmp_peer"
+    direction: int | None = None
+    weight: float | None = None
+    evidence: str | None = None
     source: str
 
 
