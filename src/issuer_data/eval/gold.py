@@ -91,6 +91,38 @@ def _prose_pdf(paragraphs, *, font=None) -> bytes:
     return buf.getvalue()
 
 
+def _scanned_pdf(rows) -> bytes | None:
+    """The same table as a page image — no text layer at all.
+
+    This is the failure the local engine cannot parse and, before validation,
+    reported as a clean empty result. Keeping it in the gold set means the eval
+    always contains at least one document that *must* be caught, so a gate that
+    silently stops working shows up as `missed` instead of a perfect score.
+    """
+    from io import BytesIO
+
+    try:
+        from PIL import Image, ImageDraw
+        from reportlab.lib.pagesizes import letter
+        from reportlab.lib.utils import ImageReader
+        from reportlab.pdfgen import canvas
+    except Exception:  # noqa: BLE001
+        return None
+
+    img = Image.new("RGB", (1200, 400), "white")
+    draw = ImageDraw.Draw(img)
+    for r, row in enumerate(rows):
+        for c, cell in enumerate(row):
+            draw.text((40 + c * 320, 40 + r * 60), str(cell), fill="black")
+        draw.line((30, 30 + r * 60, 1170, 30 + r * 60), fill="black")
+    buf = BytesIO()
+    page = canvas.Canvas(buf, pagesize=letter)
+    page.drawImage(ImageReader(img), 40, 400, width=520, height=180)
+    page.showPage()
+    page.save()
+    return buf.getvalue()
+
+
 # --------------------------------------------------------------- case builders
 _US_TABLE = [["Account", "2023", "2022"], ["Revenue", "1234", "1180"],
              ["Operating income", "456", "410"], ["Net income", "321", "298"]]
@@ -149,6 +181,10 @@ def synthetic_cases() -> list[GoldCase]:
         cases.append(GoldCase("kr_prose", "KR/ko/prose",
                               _prose_pdf(_KO_PROSE, font="HYSMyeongJo-Medium"),
                               paragraphs=_KO_PROSE))
+    scanned = _scanned_pdf(_US_TABLE)
+    if scanned:
+        cases.append(GoldCase("us_scanned", "US/en/scanned",
+                              scanned, tables=[_US_TABLE]))
     if _register_cid("STSong-Light"):
         cases.append(GoldCase("hk_single", "HK/zh/single-table",
                               _table_pdf(_HK_TABLE, font="STSong-Light"),
