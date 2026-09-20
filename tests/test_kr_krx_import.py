@@ -14,8 +14,8 @@ import sys
 
 import pytest
 
-from issuer_data.collectors import kr_krx
-from issuer_data.collectors.base import NotSupportedError
+from stock_data.collectors import kr_krx
+from stock_data.collectors.base import NotSupportedError
 
 
 def test_import_failure_becomes_not_supported(monkeypatch):

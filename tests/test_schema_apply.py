@@ -13,7 +13,7 @@ import psycopg
 import pytest
 from conftest import schema_sql
 
-from issuer_data.storage.db import SCHEMA_VERSION, connect, init_db, redact
+from stock_data.storage.db import SCHEMA_VERSION, connect, init_db, redact
 
 
 def test_init_db_is_idempotent(_pg_dsn):
@@ -122,7 +122,7 @@ def test_schema_applies_to_an_empty_database(_pg_dsn):
 ])
 def test_a_remote_dsn_gets_a_verified_connection(dsn, expected):
     """libpq's default falls back to plaintext without saying so."""
-    from issuer_data.storage.db import _with_sslmode
+    from stock_data.storage.db import _with_sslmode
 
     assert expected in _with_sslmode(dsn)
 

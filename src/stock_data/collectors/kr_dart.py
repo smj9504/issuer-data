@@ -1,6 +1,6 @@
 """DART (Korea) collector via OpenDartReader: master (corp_code), financials, filings.
 
-Requires a free OpenDART API key (ISSUER_DART_API_KEY). Without it, the collector
+Requires a free OpenDART API key (STOCK_DART_API_KEY). Without it, the collector
 raises NotSupportedError and the orchestrator skips KR financials/filings cleanly.
 """
 
@@ -52,7 +52,7 @@ class DartCollector(BaseCollector):
         self.api_key = settings.dart_api_key
         if not self.api_key:
             raise NotSupportedError(
-                "DART requires ISSUER_DART_API_KEY (free at opendart.fss.or.kr)"
+                "DART requires STOCK_DART_API_KEY (free at opendart.fss.or.kr)"
             )
         import OpenDartReader
 

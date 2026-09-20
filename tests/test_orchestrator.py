@@ -1,7 +1,7 @@
 import pytest
 
-from issuer_data.models import Filing
-from issuer_data.orchestrator import _filter_filing_types
+from stock_data.models import Filing
+from stock_data.orchestrator import _filter_filing_types
 
 
 def _filing(filing_type):

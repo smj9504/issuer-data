@@ -12,8 +12,8 @@ import psycopg
 import pytest
 from conftest import TEST_DSN
 
-from issuer_data.cli import cmd_check_db
-from issuer_data.storage.db import SCHEMA_VERSION
+from stock_data.cli import cmd_check_db
+from stock_data.storage.db import SCHEMA_VERSION
 
 SCRATCH = "checkdb_scratch"
 
@@ -22,7 +22,7 @@ def _server_dsn() -> str:
     """The test DSN pointed at `postgres`, so the scratch db can be created."""
     import os
 
-    dsn = os.environ.get("ISSUER_TEST_DSN", TEST_DSN)
+    dsn = os.environ.get("STOCK_TEST_DSN", TEST_DSN)
     return dsn.rsplit("/", 1)[0] + "/postgres"
 
 
@@ -51,7 +51,7 @@ def _run(monkeypatch, dsn: str, capsys) -> tuple[int, str]:
     `get_settings` caches into a module global, so the DSN is swapped by
     replacing that object; monkeypatch restores it however the test ends.
     """
-    from issuer_data import config
+    from stock_data import config
 
     monkeypatch.setattr(config, "_settings",
                         config.Settings(_env_file=None, db_dsn=dsn))

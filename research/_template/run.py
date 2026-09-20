@@ -26,9 +26,9 @@ PARAMS = {"example_param": "replace me"}
 
 
 # ---------------------------------------------------------------------- fetch
-# Reuse issuer_data.http.client.HttpClient(rate_limit=...) for new HTTP
-# calls, issuer_data.documents.extract_text(content, fmt) for PDF/HTML/XML/
-# ZIP text, and issuer_data.services.collect_fx(repo, settings, start, end)
+# Reuse stock_data.http.client.HttpClient(rate_limit=...) for new HTTP
+# calls, stock_data.documents.extract_text(content, fmt) for PDF/HTML/XML/
+# ZIP text, and stock_data.services.collect_fx(repo, settings, start, end)
 # for point-in-time FX. Cache raw downloads under CACHE_DIR so re-running
 # while iterating on parsing doesn't re-hit rate-limited sources.
 def fetch() -> list[dict]:

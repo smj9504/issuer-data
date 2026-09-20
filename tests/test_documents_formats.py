@@ -13,12 +13,12 @@ import zlib
 
 import pytest
 
-from issuer_data import documents
-from issuer_data.config import Settings
-from issuer_data.documents import _filename_from, _format_from, extract_text, sniff_format
-from issuer_data.extraction.hwp import is_hwp5, is_hwpx
-from issuer_data.models import Company, Filing, Security
-from issuer_data.storage.repository import Repository
+from stock_data import documents
+from stock_data.config import Settings
+from stock_data.documents import _filename_from, _format_from, extract_text, sniff_format
+from stock_data.extraction.hwp import is_hwp5, is_hwpx
+from stock_data.models import Company, Filing, Security
+from stock_data.storage.repository import Repository
 
 # --------------------------------------------------------------- HWP fixtures
 _FREE, _ENDOFCHAIN, _FATSECT, _NOSTREAM = 0xFFFFFFFF, 0xFFFFFFFE, 0xFFFFFFFD, 0xFFFFFFFF

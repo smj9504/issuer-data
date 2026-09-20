@@ -7,9 +7,9 @@ absent from an A listing, so no downstream filter could recover them.
 
 import pytest
 
-from issuer_data.collectors.base import NotSupportedError
-from issuer_data.collectors.kr_dart import _FILING_KINDS
-from issuer_data.orchestrator import _fetch_filings
+from stock_data.collectors.base import NotSupportedError
+from stock_data.collectors.kr_dart import _FILING_KINDS
+from stock_data.orchestrator import _fetch_filings
 
 
 class _DartLike:
@@ -74,7 +74,7 @@ def test_kind_dictionary_covers_the_documented_dart_codes():
 
 def test_unknown_kind_is_rejected_with_the_valid_options(monkeypatch):
     """A typo must fail loudly rather than silently returning 정기공시."""
-    from issuer_data.collectors import kr_dart
+    from stock_data.collectors import kr_dart
 
     collector = kr_dart.DartCollector.__new__(kr_dart.DartCollector)
     with pytest.raises(ValueError, match="Unknown DART filing kind"):

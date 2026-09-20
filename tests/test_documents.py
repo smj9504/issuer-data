@@ -1,11 +1,11 @@
 import io
 import zipfile
 
-from issuer_data import documents
-from issuer_data.config import Settings
-from issuer_data.documents import _format_from, extract_text
-from issuer_data.models import Company, Filing, Security
-from issuer_data.storage.repository import Repository
+from stock_data import documents
+from stock_data.config import Settings
+from stock_data.documents import _format_from, extract_text
+from stock_data.models import Company, Filing, Security
+from stock_data.storage.repository import Repository
 
 
 def test_extract_html_text():

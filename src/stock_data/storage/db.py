@@ -21,7 +21,7 @@ SCHEMA_VERSION = "2026-09-20"
 
 def _read_schema() -> str:
     """Load the canonical schema.sql shipped with the package."""
-    return resources.files("issuer_data.storage").joinpath("schema.sql").read_text(
+    return resources.files("stock_data.storage").joinpath("schema.sql").read_text(
         encoding="utf-8"
     )
 

@@ -84,7 +84,7 @@ HKEXnews의 filing 검색 API(`titleSearchServlet.do`)는 "이미 아는 종목�
 ### 4. 공모총액 USD 환산
 
 New Listing Report는 공모총액을 HKD로만 제공. 상장일 기준 HKD/USD spot rate로 환산 —
-`issuer_data.services._fetch_ccy_to_usd`(기존 `collect_fx`가 쓰는 것과 동일한 Yahoo 시세 헬퍼)를
+`stock_data.services._fetch_ccy_to_usd`(기존 `collect_fx`가 쓰는 것과 동일한 Yahoo 시세 헬퍼)를
 DB에 쓰지 않고 재사용(`research/README.md`의 "reuse what exists, DB is read-only" 원칙).
 HKD/USD는 커런시보드 페그(~7.75~7.85)라 상장일 당일 시세가 없으면(주말/공휴일) 직전 최대 7일
 이내 가장 가까운 거래일 시세로 대체 — 페그 특성상 이 근사가 표에 필요한 정밀도에 충분함.

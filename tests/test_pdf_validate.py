@@ -8,8 +8,8 @@ asserting that clean input stays clean.
 
 import pytest
 
-from issuer_data.extraction.pdf.extract import StitchedTable
-from issuer_data.extraction.validate import (
+from stock_data.extraction.pdf.extract import StitchedTable
+from stock_data.extraction.validate import (
     Thresholds,
     check_arithmetic,
     check_tables_arithmetic,

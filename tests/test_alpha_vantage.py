@@ -1,7 +1,7 @@
 """Offline test: Alpha Vantage derives distinct Q1..Q4 (regression for the 'Q' collapse)."""
 
-from issuer_data.collectors.alpha_vantage import AlphaVantageCollector, _quarter_of
-from issuer_data.config import Settings
+from stock_data.collectors.alpha_vantage import AlphaVantageCollector, _quarter_of
+from stock_data.config import Settings
 
 
 def test_quarter_of():

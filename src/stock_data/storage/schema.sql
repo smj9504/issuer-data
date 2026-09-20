@@ -1,4 +1,4 @@
--- Canonical schema for the issuer-data PostgreSQL database.
+-- Canonical schema for the stock-data PostgreSQL database.
 -- Two-tier entity model (companies + securities) to support cross-listing
 -- (US ADRs, HK/US dual listings) and cross-market comparison.
 --

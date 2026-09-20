@@ -1,9 +1,9 @@
 """Offline tests for the accounting-correct FX basis (period-average + view)."""
 
-from issuer_data.config import Settings
-from issuer_data.models import Company, FinancialFact, FxRate, Security
-from issuer_data.services import _window_start, compute_period_average_fx
-from issuer_data.storage.repository import Repository
+from stock_data.config import Settings
+from stock_data.models import Company, FinancialFact, FxRate, Security
+from stock_data.services import _window_start, compute_period_average_fx
+from stock_data.storage.repository import Repository
 
 
 def test_window_start_by_period():
@@ -35,7 +35,7 @@ def test_period_average_and_usd_view(conn, monkeypatch):
     repo.commit()
 
     # patch collect_fx (network) to a no-op so only averaging runs
-    monkeypatch.setattr("issuer_data.services.collect_fx", lambda *a, **k: 0)
+    monkeypatch.setattr("stock_data.services.collect_fx", lambda *a, **k: 0)
     n = compute_period_average_fx(repo, Settings())
     assert n == 1  # one KRW/FY2023 average row
     avg = conn.execute(

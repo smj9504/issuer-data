@@ -4,9 +4,9 @@ Fixtures below are trimmed real responses captured live against open.law.go.kr
 (target=law/elaw/oldAndNew/admrul/prec), not hand-guessed shapes.
 """
 
-from issuer_data.collectors.kr_law import LawCollector
-from issuer_data.config import Settings
-from issuer_data.storage.repository import Repository
+from stock_data.collectors.kr_law import LawCollector
+from stock_data.config import Settings
+from stock_data.storage.repository import Repository
 
 LAW_SEARCH = {
     "LawSearch": {
@@ -151,7 +151,7 @@ def _collector(monkeypatch, by_target: dict) -> LawCollector:
 
 
 def test_law_collector_requires_oc():
-    from issuer_data.collectors.base import NotSupportedError
+    from stock_data.collectors.base import NotSupportedError
 
     try:
         LawCollector(Settings(law_api_oc=None))
@@ -239,7 +239,7 @@ def test_search_raw_picks_serial_and_title_over_department(monkeypatch):
 
 
 def test_repository_statute_roundtrip_and_company_link(conn, monkeypatch):
-    from issuer_data.models import Company
+    from stock_data.models import Company
 
     repo = Repository(conn)
     c = _collector(monkeypatch, {"law": LAW_SEARCH})

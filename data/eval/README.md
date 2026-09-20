@@ -9,5 +9,5 @@ data/eval/<case-name>/
 └── expected.json    # {"category": "...", "tables": [[["cell", ...], ...]], "paragraphs": ["..."]}
 ```
 
-`python -m issuer_data eval` (or `--gold-dir <dir>`) picks these up automatically
+`python -m stock_data eval` (or `--gold-dir <dir>`) picks these up automatically
 alongside the built-in synthetic cases — no code change needed.

@@ -1,4 +1,4 @@
-"""Command-line interface: python -m issuer_data <command>."""
+"""Command-line interface: python -m stock_data <command>."""
 
 from __future__ import annotations
 
@@ -709,7 +709,7 @@ def _fmt(v) -> str:
 
 # ------------------------------------------------------------------------- parser
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="issuer-data", description=__doc__)
+    p = argparse.ArgumentParser(prog="stock-data", description=__doc__)
     p.add_argument("-v", "--verbose", action="store_true", help="debug logging")
     sub = p.add_subparsers(dest="command", required=True)
 

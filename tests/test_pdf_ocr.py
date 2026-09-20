@@ -8,7 +8,7 @@ from functools import cache
 
 import pytest
 
-from issuer_data.extraction.pdf.ocr import ocr_available, ocr_pdf
+from stock_data.extraction.pdf.ocr import ocr_available, ocr_pdf
 
 # Rendering the test images needs a scalable font — any of them. Naming specific
 # files skipped these tests everywhere the names did not match: two DejaVu paths
@@ -88,10 +88,10 @@ def test_ocr_recovers_text_from_image_only_pdf():
 def test_documents_ocr_fallback_when_enabled(conn, tmp_path, monkeypatch):
     if not ocr_available():
         pytest.skip("Tesseract/PyMuPDF not installed")
-    from issuer_data import documents
-    from issuer_data.config import Settings
-    from issuer_data.models import Company, Filing, Security
-    from issuer_data.storage.repository import Repository
+    from stock_data import documents
+    from stock_data.config import Settings
+    from stock_data.models import Company, Filing, Security
+    from stock_data.storage.repository import Repository
 
     pdf = _image_only_pdf("SCANNED REPORT 2024")
     settings = Settings(docs_dir=tmp_path, ocr_enabled=True, ocr_languages="eng")
@@ -117,7 +117,7 @@ def test_documents_ocr_fallback_when_enabled(conn, tmp_path, monkeypatch):
 
 def test_ocr_is_enabled_by_default():
     """An image-only PDF is otherwise stored with no text at all, so OCR is on."""
-    from issuer_data.config import Settings
+    from stock_data.config import Settings
 
     assert Settings(_env_file=None).ocr_enabled is True
 
@@ -125,10 +125,10 @@ def test_ocr_is_enabled_by_default():
 def test_ocr_runs_without_being_asked_for(conn, tmp_path, monkeypatch):
     if not ocr_available():
         pytest.skip("Tesseract/PyMuPDF not installed")
-    from issuer_data import documents
-    from issuer_data.config import Settings
-    from issuer_data.models import Company, Filing, Security
-    from issuer_data.storage.repository import Repository
+    from stock_data import documents
+    from stock_data.config import Settings
+    from stock_data.models import Company, Filing, Security
+    from stock_data.storage.repository import Repository
 
     # No ocr_enabled=True here: the default has to carry it.
     settings = Settings(_env_file=None, docs_dir=tmp_path, ocr_languages="eng")
@@ -157,7 +157,7 @@ def test_missing_engine_warns_once_with_install_instructions(caplog, monkeypatch
     """Enabled-by-default OCR that cannot run must say so — once, not per page."""
     import logging
 
-    from issuer_data.extraction.pdf import ocr as pdf_ocr
+    from stock_data.extraction.pdf import ocr as pdf_ocr
 
     pdf_ocr.ocr_ready.cache_clear()
     monkeypatch.setattr(pdf_ocr, "ocr_available", lambda: False)
@@ -200,8 +200,8 @@ def test_a_chart_page_inside_a_text_pdf_is_not_silently_dropped():
     while the surrounding prose still referred to "the chart above"."""
     if not ocr_available():
         pytest.skip("Tesseract/PyMuPDF not installed")
-    from issuer_data import documents
-    from issuer_data.config import Settings
+    from stock_data import documents
+    from stock_data.config import Settings
 
     pdf = _mixed_pdf("The Group reports segment revenues as set out below.",
                      ["VAS 96110", "Marketing 38171"],
@@ -219,7 +219,7 @@ def test_a_chart_page_inside_a_text_pdf_is_not_silently_dropped():
 def test_pages_with_text_are_not_re_ocred():
     if not ocr_available():
         pytest.skip("Tesseract/PyMuPDF not installed")
-    from issuer_data.extraction.pdf.ocr import ocr_pages
+    from stock_data.extraction.pdf.ocr import ocr_pages
 
     pdf = _mixed_pdf("Page one prose.", ["ONLY IMAGE 4242"], "Page three prose.")
     recovered = ocr_pages(pdf, languages="eng", dpi=150, only={1})
@@ -232,11 +232,11 @@ def test_text_less_pages_are_reported_when_ocr_is_unavailable(caplog, monkeypatc
     storing a document that quietly lost some."""
     import logging
 
-    from issuer_data import documents
-    from issuer_data.config import Settings
+    from stock_data import documents
+    from stock_data.config import Settings
 
     pdf = _mixed_pdf("Before.", ["HIDDEN 777"], "After.")
-    monkeypatch.setattr("issuer_data.extraction.pdf.ocr.ocr_ready", lambda: False)
+    monkeypatch.setattr("stock_data.extraction.pdf.ocr.ocr_ready", lambda: False)
     with caplog.at_level(logging.WARNING):
         documents._ocr_pages_without_text(pdf, "Before.\nAfter.",
                                           Settings(_env_file=None), "http://x/m.pdf")

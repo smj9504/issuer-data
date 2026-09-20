@@ -18,16 +18,16 @@ from importlib import resources
 import psycopg
 import pytest
 
-from issuer_data.storage.rows import row_factory
+from stock_data.storage.rows import row_factory
 
 # The container from docker-compose.test.yml. Overridable for a different local
 # server, but never point it at a collection database: this truncates freely.
-TEST_DSN = "postgresql://issuer:issuer@localhost:55432/issuer_test"
+TEST_DSN = "postgresql://stock:stock@localhost:55432/stock_test"
 
 
 def schema_sql() -> str:
     """The shipped schema, read from the installed package rather than the tree."""
-    return resources.files("issuer_data.storage").joinpath("schema.sql").read_text(
+    return resources.files("stock_data.storage").joinpath("schema.sql").read_text(
         encoding="utf-8"
     )
 
@@ -37,7 +37,7 @@ def _pg_dsn() -> str:
     """Verify the server is reachable and apply the schema once for the session."""
     import os
 
-    dsn = os.environ.get("ISSUER_TEST_DSN", TEST_DSN)
+    dsn = os.environ.get("STOCK_TEST_DSN", TEST_DSN)
     try:
         with psycopg.connect(dsn, connect_timeout=5, autocommit=True) as conn:
             # An interrupted run (Ctrl-C, a debugger, a killed process) can
@@ -53,9 +53,9 @@ def _pg_dsn() -> str:
             # transaction holding locks, and the next TRUNCATE waits on it
             # forever -- a hung suite with no failing test to point at. These
             # turn that into a prompt error naming the statement.
-            conn.execute("ALTER DATABASE issuer_test SET lock_timeout = '10s'")
+            conn.execute("ALTER DATABASE stock_test SET lock_timeout = '10s'")
             conn.execute(
-                "ALTER DATABASE issuer_test "
+                "ALTER DATABASE stock_test "
                 "SET idle_in_transaction_session_timeout = '30s'"
             )
     except psycopg.Error as exc:
@@ -115,6 +115,6 @@ def new_db(_dsn: str = "") -> psycopg.Connection:
     """
     import os
 
-    dsn = _dsn or os.environ.get("ISSUER_TEST_DSN", TEST_DSN)
+    dsn = _dsn or os.environ.get("STOCK_TEST_DSN", TEST_DSN)
     _truncate(dsn)
     return psycopg.connect(dsn, row_factory=row_factory)

@@ -9,14 +9,14 @@ FI-vs-대주주 classification depends on. That regression is pinned below.
 import pytest
 from conftest import new_db
 
-from issuer_data.collectors.kr_disclosure_parse import (
+from stock_data.collectors.kr_disclosure_parse import (
     HLD_MTH,
     parse_holder_roster,
     parse_report_meta,
     parse_stake_changes,
     parse_treasury_disposal,
 )
-from issuer_data.models import StakeChange
+from stock_data.models import StakeChange
 
 # Trimmed from 005930 rcept 20260828001916 — roster rows first, then 변동 rows.
 D001 = """<DOCUMENT>

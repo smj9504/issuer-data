@@ -77,7 +77,7 @@ ImportError: Numba needs NumPy 2.2 or less. Got NumPy 2.5.
 ## 2. 하면 되는 일
 
 ```bash
-cd c:/projects_2026/issuer-data
+cd c:/projects_2026/stock-data
 
 # 1) 생성 — .gitignore에 이미 있으므로 .venv 이름을 쓸 것
 python -m venv .venv
@@ -145,14 +145,14 @@ OCR 폴백 로직이 한 번도 테스트된 적이 없었다.** `_font_path()`�
 
 ### 3.4 `.env`는 건드리지 말 것
 
-`.env`에 `ISSUER_DART_API_KEY` 등 실제 키가 들어 있고 `.gitignore` 2행에 등록돼 있다.
+`.env`에 `STOCK_DART_API_KEY` 등 실제 키가 들어 있고 `.gitignore` 2행에 등록돼 있다.
 venv를 만들어도 `.env`는 CWD 기준으로 읽히므로 **그대로 두면 된다.** 새로 만들거나
 덮어쓰지 말 것.
 
 ### 3.5 DB는 venv와 무관하다
 
 DB는 PostgreSQL 서버이므로(2026-09-04 이전) venv와 무관하다. `.env`의
-`ISSUER_DB_DSN`만 맞으면 되고, venv 작업이 DB를 건드릴 이유가 없다. 테스트는 별도의
+`STOCK_DB_DSN`만 맞으면 되고, venv 작업이 DB를 건드릴 이유가 없다. 테스트는 별도의
 일회용 컨테이너를 쓴다: `docker compose -f docker-compose.test.yml up -d`.
 현재 상태는 `HANDOFF.md` §0 참고 (KR 종목 2개, `kr_stake_changes` 189행 —
 검증용 표본 수준이며 본 스윕은 아직 안 돌렸다).
@@ -185,8 +185,8 @@ venv 검증이 끝나면 함께 커밋하는 게 자연스럽다 — 모두 같�
 - `pyproject.toml` — 의존성/extras 정의 (`dev`, `ocr`, `ml`), `requires-python >=3.10`
 - `requirements.txt` — pyproject의 미러 (ml/ocr는 주석 처리된 opt-in)
 - `.gitignore` — `.env`(2행), `.venv/`(29행), `venv/`(30행)
-- `src/issuer_data/pdf_ml_tables.py` — `ml_available`/`ml_ready` 가드, TATR 로딩
-- `src/issuer_data/pdf_extract.py:405` — ML 실패를 삼키고 폴백하는 지점
+- `src/stock_data/pdf_ml_tables.py` — `ml_available`/`ml_ready` 가드, TATR 로딩
+- `src/stock_data/pdf_extract.py:405` — ML 실패를 삼키고 폴백하는 지점
 - `research/2026-09_kr_block_deal/HANDOFF.md` — **본 작업과 별개인** 전 종목 스윕 인수인계
 
 ## 7. 이번에 고친 것: OCR 테스트 폰트 탐색

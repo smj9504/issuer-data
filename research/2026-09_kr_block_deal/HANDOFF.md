@@ -6,7 +6,7 @@
 전제: `research/2026-09_kr_block_deal/README.md`(설계·실측)를 먼저 읽을 것.
 
 **다른 머신에서 시작한다면 먼저:** `.env`는 git에 없다(`.gitignore`). `.env.example`을
-복사해 `ISSUER_DART_API_KEY`와 `ISSUER_DB_DSN`을 채워야 스윕이 돈다. **DB는 PostgreSQL로
+복사해 `STOCK_DART_API_KEY`와 `STOCK_DB_DSN`을 채워야 스윕이 돈다. **DB는 PostgreSQL로
 옮겼으므로 파일을 복사할 것이 없다** — 두 머신이 같은 DSN을 보면 된다 (§5). 새 DB라면
 `init-db` 후 마스터부터. 환경 구축은 `HANDOFF_VENV.md` 참고.
 
@@ -38,19 +38,19 @@
 #    yfinance에는 "시장 전 종목 열거"가 없어 명단이 안 채워진다. DART 소스는
 #    OpenDartReader가 하루 1회 받아 캐시하는 corp_codes(docs_cache/*.pkl)에서
 #    상장사 전체를 읽으므로 DART 호출 0회이고, corp_code·한글명까지 채운다.
-python -m issuer_data collect --market kr --type master --source dart
+python -m stock_data collect --market kr --type master --source dart
 
 # 2) 스윕 (첫날)
-python -m issuer_data collect --market kr --type stake \
+python -m stock_data collect --market kr --type stake \
     --start 2026-01-01 --end 2026-12-31 --max-api-calls 18000
 
 # 3) 다음 날 이어서
-python -m issuer_data collect --market kr --type stake \
+python -m stock_data collect --market kr --type stake \
     --start 2026-01-01 --end 2026-12-31 --max-api-calls 18000 --resume
 
 # 진행률 / 오늘 사용량
-python -m issuer_data status
-python -m issuer_data query --sql "SELECT status, COUNT(*) FROM scan_progress GROUP BY status"
+python -m stock_data status
+python -m stock_data query --sql "SELECT status, COUNT(*) FROM scan_progress GROUP BY status"
 ```
 
 비용 추정: 종목당 평균 5.75회(대형주 8종목 실측 — **참고치이지 상한이 아니다**),
@@ -99,7 +99,7 @@ FROM scan_progress WHERE data_type='stake' AND status='done';
 
 ```bash
 # 파서/스키마를 고친 뒤 기존 데이터를 다시 파싱해야 할 때만
-python -m issuer_data collect --market kr --type stake --symbols 000660 \
+python -m stock_data collect --market kr --type stake --symbols 000660 \
     --start ... --end ... --reparse --restart
 ```
 
@@ -202,7 +202,7 @@ D001 변동명세에는 **거래 단가 필드가 존재하지 않는다.** 파�
 ## 5. 스키마 적용 동작 (알아둘 것)
 
 **DB는 이제 PostgreSQL이다** (2026-09-04 이전 완료). 컴퓨터 A가 스윕을 돌리는 동안
-컴퓨터 B가 같은 DB를 읽어야 해서 서버형으로 옮겼다. `.env`의 `ISSUER_DB_DSN`이 접속
+컴퓨터 B가 같은 DB를 읽어야 해서 서버형으로 옮겼다. `.env`의 `STOCK_DB_DSN`이 접속
 문자열이며, 로컬이 아닌 호스트는 DSN이 직접 정하지 않는 한 `sslmode=verify-full`이 붙는다.
 
 **스키마는 `init-db`에서만 적용된다.** 예전에는 `connect()`가 열 때마다 자동 적용했지만,
@@ -219,13 +219,13 @@ PRIMARY KEY`가 된다. 스키마를 바꾸면 `db.py`의 `SCHEMA_VERSION`을 �
 
 ## 6. 관련 파일
 
-- `src/issuer_data/kr_disclosure_parse.py` — 원문 파서 (코드 사전 포함)
-- `src/issuer_data/collectors/kr_dart.py` — `fetch_stake_changes` / `fetch_treasury_disposals`,
+- `src/stock_data/kr_disclosure_parse.py` — 원문 파서 (코드 사전 포함)
+- `src/stock_data/collectors/kr_dart.py` — `fetch_stake_changes` / `fetch_treasury_disposals`,
   호출 과금(`_spend`), 접수번호 스킵
-- `src/issuer_data/collectors/base.py` — `CallBudget` / `QuotaExceededError`
-- `src/issuer_data/orchestrator.py` — `collect_coverage`의 재개·예산·`reparse` 루프
-- `src/issuer_data/storage/db.py` — 접속 팩토리 · `init_db` · 스키마 버전 확인
-- `src/issuer_data/storage/schema.sql` — 테이블 4개 + 뷰 3개
+- `src/stock_data/collectors/base.py` — `CallBudget` / `QuotaExceededError`
+- `src/stock_data/orchestrator.py` — `collect_coverage`의 재개·예산·`reparse` 루프
+- `src/stock_data/storage/db.py` — 접속 팩토리 · `init_db` · 스키마 버전 확인
+- `src/stock_data/storage/schema.sql` — 테이블 4개 + 뷰 3개
 - `tests/test_kr_disclosure_parse.py` — 파서·뷰 회귀 14건
 - `tests/test_market_scan_resume.py` — 재개·예산 회귀 20건
 - `tests/test_schema_apply.py` — 스키마 적용/버전 경고 회귀

@@ -1,4 +1,4 @@
-"""issuer-data: multi-market issuer/security data collector.
+"""stock-data: multi-market issuer/security data collector.
 
 Collects issuer/security master data, OHLCV prices, financial statements, and
 disclosures/filings from Korea (DART, KRX), Hong Kong (HKEXnews), and the US

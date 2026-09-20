@@ -1,7 +1,7 @@
 """Tests for engine consensus — two detectors refereeing each other."""
 
-from issuer_data.extraction.pdf.agreement import compare_tables
-from issuer_data.extraction.pdf.extract import StitchedTable
+from stock_data.extraction.pdf.agreement import compare_tables
+from stock_data.extraction.pdf.extract import StitchedTable
 
 
 def _t(rows, start=1, end=1):

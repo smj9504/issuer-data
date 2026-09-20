@@ -11,9 +11,9 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: issuer
-      POSTGRES_PASSWORD: issuer
-      POSTGRES_DB: issuer_test
+      POSTGRES_USER: stock
+      POSTGRES_PASSWORD: stock
+      POSTGRES_DB: stock_test
       # The container initialises the cluster on first boot; C collation keeps
       # ordering predictable regardless of the host's locale.
       POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
@@ -32,7 +32,7 @@ services:
       - -c
       - synchronous_commit=off
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U issuer -d issuer_test"]
+      test: ["CMD-SHELL", "pg_isready -U stock -d stock_test"]
       interval: 2s
       timeout: 3s
       retries: 15

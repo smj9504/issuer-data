@@ -2,11 +2,11 @@
 
 import pandas as pd
 
-from issuer_data.collectors.base import NotSupportedError
-from issuer_data.collectors.fmp import FmpCollector
-from issuer_data.collectors.kr_dart import DartCollector
-from issuer_data.collectors.kr_krx import KrxCollector
-from issuer_data.config import Settings
+from stock_data.collectors.base import NotSupportedError
+from stock_data.collectors.fmp import FmpCollector
+from stock_data.collectors.kr_dart import DartCollector
+from stock_data.collectors.kr_krx import KrxCollector
+from stock_data.config import Settings
 
 
 # --------------------------------------------------------------------- FMP
@@ -53,7 +53,7 @@ def test_fmp_index_membership_us_only(monkeypatch):
     c._current_market = "KR"
     import pytest
 
-    from issuer_data.collectors.base import NotSupportedError
+    from stock_data.collectors.base import NotSupportedError
     with pytest.raises(NotSupportedError):
         c.fetch_index_membership("005930")
 

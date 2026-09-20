@@ -14,16 +14,16 @@ here:
 
 import pytest
 
-from issuer_data.collectors.base import (
+from stock_data.collectors.base import (
     BaseCollector,
     CallBudget,
     NotSupportedError,
     QuotaExceededError,
 )
-from issuer_data.config import Settings
-from issuer_data.models import StakeChange
-from issuer_data.orchestrator import Orchestrator
-from issuer_data.storage.repository import Repository
+from stock_data.config import Settings
+from stock_data.models import StakeChange
+from stock_data.orchestrator import Orchestrator
+from stock_data.storage.repository import Repository
 
 SCOPE = ("KR", "stake", "dart", "2026-01-01", "2026-08-31")
 
@@ -189,7 +189,7 @@ def _change(symbol, rcept):
 
 
 def _orchestrator(conn, collector, monkeypatch):
-    from issuer_data import orchestrator as orch_mod
+    from stock_data import orchestrator as orch_mod
 
     monkeypatch.setattr(orch_mod, "build_collector", lambda src, settings: collector)
     monkeypatch.setattr(orch_mod, "default_source", lambda market, dt: "dart")

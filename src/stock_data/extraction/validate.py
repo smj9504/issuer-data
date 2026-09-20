@@ -358,7 +358,7 @@ class ValidationReport:
 @dataclass
 class Thresholds:
     """Where each signal stops being acceptable. Calibrate these on gold data
-    (``python -m issuer_data eval``) rather than guessing — the numbers below are
+    (``python -m stock_data eval``) rather than guessing — the numbers below are
     a starting point, not a measurement."""
 
     coverage_min: float = 0.98      # below → review

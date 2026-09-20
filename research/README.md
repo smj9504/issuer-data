@@ -1,6 +1,6 @@
 # Research (one-off investigations)
 
-This directory is for questions that need data issuer-data doesn't already have
+This directory is for questions that need data stock-data doesn't already have
 modeled/collected, and that are unlikely to be asked again in the same shape —
 as opposed to data that belongs in the durable `collectors/` -> `schema.sql`
 pipeline. See "One-off research vs. reusable collectors" in the top-level
@@ -9,9 +9,9 @@ README for the short version of this triage rule.
 ## Triage: where does a new question go?
 
 1. **Already-collected data** — no new fetching needed. Use
-   `issuer-data query --sql ...` or connect to the database at `ISSUER_DB_DSN`
+   `stock-data query --sql ...` or connect to the database at `STOCK_DB_DSN`
    (PostgreSQL) with pandas directly. Nothing to add here. The stale
-   `data/issuer_data.sqlite` on disk predates the move and is not the live
+   `data/stock_data.sqlite` on disk predates the move and is not the live
    database.
 2. **One-off research** — new data, unlikely to be asked again in this shape.
    → a task folder in this directory (see below).
@@ -68,15 +68,15 @@ default is to keep it; delete only when you're sure.
 
 No `research_lib` package. Import directly from the main package:
 
-- **HTTP**: `issuer_data.http.client.HttpClient(rate_limit=...)` — the same
+- **HTTP**: `stock_data.http.client.HttpClient(rate_limit=...)` — the same
   rate-limited client every collector uses.
-- **Document text extraction**: `issuer_data.documents.extract_text(content,
+- **Document text extraction**: `stock_data.documents.extract_text(content,
   fmt)` — PDF/HTML/XML/ZIP already handled, already a public function.
-- **Point-in-time FX**: `issuer_data.services.collect_fx(repo, settings,
+- **Point-in-time FX**: `stock_data.services.collect_fx(repo, settings,
   start, end)` to backfill just the narrow window you need into `fx_rates`,
   then look up the nearest-prior spot rate yourself — same SQL pattern as
   `v_latest_price` in `storage/schema.sql`. No new helper needed.
-- **Existing DB**: `issuer_data.storage.db.connect()` + `Repository` to join
+- **Existing DB**: `stock_data.storage.db.connect()` + `Repository` to join
   against `companies`/`securities` etc. Treat it as read-only by convention
   (don't call `upsert_*` methods) unless you're deliberately filling in
   reference data per the rule of thumb above.
@@ -105,7 +105,7 @@ volume, that's when it's worth graduating to real parsing code (below).
 
 If a task's fetch/parse logic (or an LLM-extraction schema that's proven
 stable) turns out to be needed a second time: move the logic into
-`src/issuer_data/collectors/<source>.py` (write a proper parsing function if
+`src/stock_data/collectors/<source>.py` (write a proper parsing function if
 it started as LLM-assisted extraction), add a typed model to `models.py`, add
 a table to `storage/schema.sql` with `source` in its primary key (and a
 nullable `company_id` FK if relevant) — `statutes`/`law_api_raw` in

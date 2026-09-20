@@ -1,8 +1,8 @@
 """Tests for schema-driven field extraction and its provenance."""
 
-from issuer_data.extraction.fields import DEFAULT_SPECS, FieldSpec, extract_fields, load_specs
-from issuer_data.extraction.pdf.extract import StitchedTable
-from issuer_data.extraction.validate import validate
+from stock_data.extraction.fields import DEFAULT_SPECS, FieldSpec, extract_fields, load_specs
+from stock_data.extraction.pdf.extract import StitchedTable
+from stock_data.extraction.validate import validate
 
 
 def _table(rows, page=1):

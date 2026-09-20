@@ -1,6 +1,6 @@
 import pytest
 
-from issuer_data.utils.symbols import normalize_symbol
+from stock_data.utils.symbols import normalize_symbol
 
 
 @pytest.mark.parametrize("market,raw,expected", [

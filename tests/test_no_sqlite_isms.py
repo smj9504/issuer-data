@@ -9,7 +9,7 @@ import re
 import tokenize
 from pathlib import Path
 
-SRC = Path(__file__).resolve().parent.parent / "src" / "issuer_data"
+SRC = Path(__file__).resolve().parent.parent / "src" / "stock_data"
 TESTS = Path(__file__).resolve().parent
 
 # A '?' sitting where a bind goes. Reading the position rather than hunting for

@@ -178,23 +178,23 @@ HAVING COUNT(DISTINCT rcept_no) > 1;
 
 ```bash
 # 지분 변동 명세 (D001 원문 파싱)
-python -m issuer_data collect --market kr --type stake --symbols 005930     --start 2026-08-01 --end 2026-08-31
+python -m stock_data collect --market kr --type stake --symbols 005930     --start 2026-08-01 --end 2026-08-31
 
 # 전 종목 스캔 (--symbols 생략 시 DB의 KR 전 종목). 일일 예산에 걸리면 그 자리에서
 # 깔끔히 멈추고, --resume 으로 다음 날 이어서 돈다
-python -m issuer_data collect --market kr --type stake     --start 2026-01-01 --end 2026-08-31 --max-api-calls 18000
-python -m issuer_data collect --market kr --type stake     --start 2026-01-01 --end 2026-08-31 --max-api-calls 18000 --resume
+python -m stock_data collect --market kr --type stake     --start 2026-01-01 --end 2026-08-31 --max-api-calls 18000
+python -m stock_data collect --market kr --type stake     --start 2026-01-01 --end 2026-08-31 --max-api-calls 18000 --resume
 
 # 진행 상황과 오늘 쓴 호출 수
-python -m issuer_data status
+python -m stock_data status
 
 # 자기주식 취득/처분 (주요사항보고 B)
-python -m issuer_data collect --market kr --type treasury --symbols 005930     --start 2025-01-01 --end 2026-08-31
+python -m stock_data collect --market kr --type treasury --symbols 005930     --start 2025-01-01 --end 2026-08-31
 
 # 분류 / 딜 집계 / 가격 정합성
-python -m issuer_data query --sql "SELECT * FROM v_kr_stake_sales"
-python -m issuer_data query --sql "SELECT * FROM v_kr_stake_deals"
-python -m issuer_data query --sql "SELECT * FROM v_kr_treasury_price_check"
+python -m stock_data query --sql "SELECT * FROM v_kr_stake_sales"
+python -m stock_data query --sql "SELECT * FROM v_kr_stake_deals"
+python -m stock_data query --sql "SELECT * FROM v_kr_treasury_price_check"
 ```
 
 FI/대주주 기준을 바꾸려면 `schema.sql`의 `v_kr_stake_sales`에 있는 `holder_bucket`

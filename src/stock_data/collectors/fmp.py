@@ -75,7 +75,7 @@ class FmpCollector(BaseCollector):
         self.api_key = settings.fmp_api_key
         if not self.api_key:
             raise NotSupportedError(
-                "FMP requires ISSUER_FMP_API_KEY (free tier at financialmodelingprep.com)"
+                "FMP requires STOCK_FMP_API_KEY (free tier at financialmodelingprep.com)"
             )
         self.client = HttpClient(rate_limit=settings.fmp_rate_limit)
 

@@ -52,7 +52,7 @@ PARAMS = {
 
 # ---------------------------------------------------------------------- fetch
 def _http_client():
-    from issuer_data.http.client import HttpClient
+    from stock_data.http.client import HttpClient
 
     ua = (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -171,7 +171,7 @@ def fetch_prospectus_text(pop: list[dict]) -> list[dict]:
     read a short per-deal excerpt instead of a 500-page PDF. Deals with no
     "CORNERSTONE" hits at all get an explicit empty marker (real outcome —
     plenty of small-cap HK IPOs have no cornerstone tranche)."""
-    from issuer_data.http.client import HttpClient
+    from stock_data.http.client import HttpClient
 
     client, ua = _http_client()
     search_client = HttpClient(
@@ -333,10 +333,10 @@ def fetch_ccy_usd_rates(ccy: str, start: str, end: str) -> dict[str, float]:
     research/README.md's "reuse what exists, treat the DB as read-only"
     convention.
     """
-    from issuer_data.http.client import HttpClient
-    from issuer_data.services import _fetch_ccy_to_usd
+    from stock_data.http.client import HttpClient
+    from stock_data.services import _fetch_ccy_to_usd
 
-    client = HttpClient(rate_limit=2.0, headers={"User-Agent": "issuer-data research (fx)"})
+    client = HttpClient(rate_limit=2.0, headers={"User-Agent": "stock-data research (fx)"})
     rates = _fetch_ccy_to_usd(client, ccy, start, end)
     return {r.rate_date: r.rate for r in rates}
 

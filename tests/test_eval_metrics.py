@@ -1,6 +1,6 @@
 """Unit tests for the eval metrics on tiny hand-verifiable cases."""
 
-from issuer_data.eval.metrics import (
+from stock_data.eval.metrics import (
     grits_con,
     numeric_exact_match,
     paragraph_continuity,

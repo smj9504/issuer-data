@@ -1,6 +1,6 @@
-from issuer_data.collectors.resolver import apply_overrides, resolve_and_store
-from issuer_data.models import SecurityRecord
-from issuer_data.storage.repository import Repository
+from stock_data.collectors.resolver import apply_overrides, resolve_and_store
+from stock_data.models import SecurityRecord
+from stock_data.storage.repository import Repository
 
 
 def test_adr_links_to_underlying_by_isin(conn):

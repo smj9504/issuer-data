@@ -7,15 +7,15 @@ multi-page PDF whose table is split across the page break.
 
 import pytest
 
-from issuer_data.extraction.pdf.extract import (
+from stock_data.extraction.pdf.extract import (
     StitchedTable,
     _too_empty,
     ground_numbers,
     reflow_narrative,
     stitch_tables,
 )
-from issuer_data.models import Company, Filing, Security
-from issuer_data.storage.repository import Repository
+from stock_data.models import Company, Filing, Security
+from stock_data.storage.repository import Repository
 
 
 # ------------------------------------------------------------- table stitching
@@ -179,7 +179,7 @@ def test_extract_structured_on_real_split_table():
     doc.build([tbl])
     content = buf.getvalue()
 
-    from issuer_data.extraction.pdf.extract import extract_structured
+    from stock_data.extraction.pdf.extract import extract_structured
     sdoc = extract_structured(content)
     assert sdoc.page_count >= 2
     assert sdoc.tables, "expected at least one detected table"
@@ -218,7 +218,7 @@ def test_plain_extraction_is_reflowed_without_asking_for_tables():
     """Page furniture and one-line-per-line breaks hurt anything reading the
     text, not only table work, so the narrative pass is not behind a table flag."""
     pymupdf = pytest.importorskip("pymupdf")
-    from issuer_data.documents import extract_text
+    from stock_data.documents import extract_text
 
     sentence = ["The Group delivered record revenue this year, driven by strong",
                 "demand across all of its principal operating segments and",
@@ -244,8 +244,8 @@ def test_plain_extraction_is_reflowed_without_asking_for_tables():
 # ---------------------------------------- the verdict, end to end on real PDFs
 def test_a_clean_pdf_passes_the_gate_with_full_coverage():
     pytest.importorskip("reportlab")
-    from issuer_data.eval.gold import _table_pdf
-    from issuer_data.extraction.pdf.extract import extract_structured
+    from stock_data.eval.gold import _table_pdf
+    from stock_data.extraction.pdf.extract import extract_structured
 
     rows = [["Account", "2023"], ["Revenue", "600"], ["Cost", "400"], ["Total", "1,000"]]
     sdoc = extract_structured(_table_pdf(rows))
@@ -261,8 +261,8 @@ def test_a_scanned_pdf_fails_loudly_instead_of_returning_empty():
     clean, empty result that looked like success."""
     pytest.importorskip("reportlab")
     pytest.importorskip("PIL")
-    from issuer_data.eval.gold import _scanned_pdf
-    from issuer_data.extraction.pdf.extract import extract_structured
+    from stock_data.eval.gold import _scanned_pdf
+    from stock_data.extraction.pdf.extract import extract_structured
 
     content = _scanned_pdf([["Account", "2023"], ["Revenue", "1234"]])
     sdoc = extract_structured(content)
@@ -274,8 +274,8 @@ def test_a_scanned_pdf_fails_loudly_instead_of_returning_empty():
 def test_a_pdf_whose_total_is_wrong_goes_to_review():
     """Nothing is compared to a label here: the document contradicts itself."""
     pytest.importorskip("reportlab")
-    from issuer_data.eval.gold import _table_pdf
-    from issuer_data.extraction.pdf.extract import extract_structured
+    from stock_data.eval.gold import _table_pdf
+    from stock_data.extraction.pdf.extract import extract_structured
 
     rows = [["Account", "2023"], ["Revenue", "600"], ["Cost", "400"], ["Total", "9,999"]]
     sdoc = extract_structured(_table_pdf(rows))
@@ -285,8 +285,8 @@ def test_a_pdf_whose_total_is_wrong_goes_to_review():
 
 def test_validation_can_be_switched_off():
     pytest.importorskip("reportlab")
-    from issuer_data.eval.gold import _table_pdf
-    from issuer_data.extraction.pdf.extract import extract_structured
+    from stock_data.eval.gold import _table_pdf
+    from stock_data.extraction.pdf.extract import extract_structured
 
     sdoc = extract_structured(_table_pdf([["A", "1"], ["B", "2"]]), validate=False)
     assert sdoc.validation is None
@@ -297,9 +297,9 @@ def test_the_text_detector_is_an_independent_second_opinion():
     """The consensus check needs a detector that does not share the first one's
     assumptions: this one infers the grid from where the words sit."""
     pytest.importorskip("reportlab")
-    from issuer_data.eval.gold import _table_pdf
-    from issuer_data.extraction.pdf.agreement import agreement
-    from issuer_data.extraction.pdf.extract import extract_structured
+    from stock_data.eval.gold import _table_pdf
+    from stock_data.extraction.pdf.agreement import agreement
+    from stock_data.extraction.pdf.extract import extract_structured
 
     content = _table_pdf([["Account", "2023"], ["Revenue", "600"], ["Cost", "400"]])
     sdoc = extract_structured(content)

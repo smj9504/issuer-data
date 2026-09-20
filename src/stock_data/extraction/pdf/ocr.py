@@ -24,7 +24,7 @@ log = get_logger(__name__)
 _INSTALL_HINT = (
     "install the Python side with `pip install '.[ocr]'` and the engine with "
     "`apt install tesseract-ocr tesseract-ocr-kor tesseract-ocr-chi-tra`, "
-    "or set ISSUER_OCR_ENABLED=false / pass --no-ocr to stop trying"
+    "or set STOCK_OCR_ENABLED=false / pass --no-ocr to stop trying"
 )
 
 

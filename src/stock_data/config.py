@@ -1,4 +1,4 @@
-"""Application configuration loaded from environment / .env (prefix ISSUER_)."""
+"""Application configuration loaded from environment / .env (prefix STOCK_)."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     """Runtime settings. All API keys are optional; a missing key skips its source."""
 
     model_config = SettingsConfigDict(
-        env_prefix="ISSUER_",
+        env_prefix="STOCK_",
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
@@ -25,15 +25,15 @@ class Settings(BaseSettings):
 
     # KRX data portal now requires a (free) member login for its JSON endpoints.
     # pykrx reads the UNPREFIXED KRX_ID / KRX_PW straight from os.environ, so these
-    # read the same unprefixed names (ISSUER_-prefixed copies still work) instead of
+    # read the same unprefixed names (STOCK_-prefixed copies still work) instead of
     # silently staying None while pykrx is in fact authenticated.
     krx_id: str | None = Field(
         default=None,
-        validation_alias=AliasChoices("KRX_ID", "ISSUER_KRX_ID"),
+        validation_alias=AliasChoices("KRX_ID", "STOCK_KRX_ID"),
     )
     krx_pw: str | None = Field(
         default=None,
-        validation_alias=AliasChoices("KRX_PW", "ISSUER_KRX_PW"),
+        validation_alias=AliasChoices("KRX_PW", "STOCK_KRX_PW"),
     )
 
     # 국가법령정보 공동활용 OpenAPI (open.law.go.kr) — OC is the email-id issued on
@@ -41,13 +41,13 @@ class Settings(BaseSettings):
     law_api_oc: str | None = None
 
     # SEC EDGAR requires a descriptive UA with contact info or it returns 403.
-    sec_user_agent: str = "issuer-data research your-email@example.com"
+    sec_user_agent: str = "stock-data research your-email@example.com"
 
     # --- Storage ------------------------------------------------------------
     # PostgreSQL, so a collection on one machine and analysis on another can
     # share one database. The default points at the local test container; a
-    # real deployment sets ISSUER_DB_DSN in .env, which is not tracked.
-    db_dsn: str = "postgresql://issuer:issuer@localhost:55432/issuer_test"
+    # real deployment sets STOCK_DB_DSN in .env, which is not tracked.
+    db_dsn: str = "postgresql://stock:stock@localhost:55432/stock_test"
     docs_dir: Path = Path("data/documents")
     overrides_path: Path = Path("data/company_overrides.csv")
 
@@ -74,7 +74,7 @@ class Settings(BaseSettings):
 
     # --- extraction validation (reference-free; see pdf_validate) -------------
     # Thresholds are a starting point, not a measurement: calibrate them against
-    # a labelled sample with `python -m issuer_data eval` before trusting them.
+    # a labelled sample with `python -m stock_data eval` before trusting them.
     pdf_validate_enabled: bool = True
     pdf_coverage_min: float = 0.98        # below → review
     pdf_coverage_fail: float = 0.85       # below → fail: content was lost

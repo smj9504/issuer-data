@@ -8,10 +8,10 @@ import json
 
 import pytest
 
-from issuer_data.eval.harness import gate_calibration
-from issuer_data.extraction.pdf.extract import StitchedTable
-from issuer_data.extraction.validate import validate
-from issuer_data.storage.repository import Repository
+from stock_data.eval.harness import gate_calibration
+from stock_data.extraction.pdf.extract import StitchedTable
+from stock_data.extraction.validate import validate
+from stock_data.storage.repository import Repository
 
 
 @pytest.fixture()

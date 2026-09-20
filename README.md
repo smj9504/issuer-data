@@ -1,4 +1,4 @@
-# issuer-data
+# stock-data
 
 Multi-market issuer/security **data collector** into a unified **PostgreSQL** database.
 
@@ -37,16 +37,16 @@ Copy `.env.example` to `.env` and fill in what you have (every key is optional �
 key just skips that source):
 
 ```
-ISSUER_DART_API_KEY=            # free: https://opendart.fss.or.kr
-ISSUER_FMP_API_KEY=             # free tier: https://financialmodelingprep.com
-ISSUER_ALPHAVANTAGE_API_KEY=    # free: https://www.alphavantage.co/support/#api-key
-ISSUER_SEC_USER_AGENT=Your Name your-email@example.com   # required or EDGAR returns 403
-ISSUER_DB_DSN=postgresql://user:password@host:5432/issuer_data
+STOCK_DART_API_KEY=            # free: https://opendart.fss.or.kr
+STOCK_FMP_API_KEY=             # free tier: https://financialmodelingprep.com
+STOCK_ALPHAVANTAGE_API_KEY=    # free: https://www.alphavantage.co/support/#api-key
+STOCK_SEC_USER_AGENT=Your Name your-email@example.com   # required or EDGAR returns 403
+STOCK_DB_DSN=postgresql://user:password@host:5432/stock_data
 ```
 
 No key is needed for SEC EDGAR (just a descriptive User-Agent), HKEXnews, or yfinance.
 
-`ISSUER_DB_DSN` is the one setting that is not optional. A remote host gets
+`STOCK_DB_DSN` is the one setting that is not optional. A remote host gets
 `sslmode=verify-full` unless the DSN chooses for itself; loopback is exempt.
 
 Collection runs on one machine while analysis runs on another, so the database is a
@@ -55,7 +55,7 @@ reads -- the CLI's read-only check on `query` is a guard rail, not a boundary:
 
 ```sql
 CREATE ROLE analyst LOGIN PASSWORD '...';
-GRANT CONNECT ON DATABASE issuer_data TO analyst;
+GRANT CONNECT ON DATABASE stock_data TO analyst;
 GRANT USAGE ON SCHEMA public TO analyst;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO analyst;
 -- without this, tables added later are invisible to the role
@@ -69,45 +69,45 @@ throwaway Postgres on port 55432; tests skip if it is not running.
 ## Usage
 
 ```bash
-python -m issuer_data init-db
+python -m stock_data init-db
 
 # US (no key needed)
-python -m issuer_data collect --market us --type master     --symbols AAPL,MSFT
-python -m issuer_data collect --market us --type financials --symbols AAPL
-python -m issuer_data collect --market us --type filings    --symbols AAPL --download-docs
+python -m stock_data collect --market us --type master     --symbols AAPL,MSFT
+python -m stock_data collect --market us --type financials --symbols AAPL
+python -m stock_data collect --market us --type filings    --symbols AAPL --download-docs
 
 # Prices (yfinance) for any market — symbol forms are normalized automatically
-python -m issuer_data collect --market kr --type prices --symbols 005930 --start 2024-06-01 --end 2024-06-30
-python -m issuer_data collect --market hk --type prices --symbols 0700.HK
+python -m stock_data collect --market kr --type prices --symbols 005930 --start 2024-06-01 --end 2024-06-30
+python -m stock_data collect --market hk --type prices --symbols 0700.HK
 
 # Hong Kong filings from HKEXnews (+ download original PDFs and extract text)
-python -m issuer_data collect --market hk --type filings --symbols 00700 --download-docs
+python -m stock_data collect --market hk --type filings --symbols 00700 --download-docs
 
 # Filter filings by type (comma-separated, case-insensitive substring match on filing_type)
-python -m issuer_data collect --market us --type filings --symbols AAPL --filing-type 8-K,10-K
+python -m stock_data collect --market us --type filings --symbols AAPL --filing-type 8-K,10-K
 
 # DART 공시유형: 지분공시(D)에 주식등의대량보유상황보고서, 주요사항보고(B)에 자기주식처분결정
-python -m issuer_data collect --market kr --type filings --source dart --symbols 005930     --dart-kind D --filing-type 대량보유
+python -m stock_data collect --market kr --type filings --source dart --symbols 005930     --dart-kind D --filing-type 대량보유
 
 # Market-wide sweep of a metered source: no --symbols means every stored security
 # in that market. --max-api-calls stops the sweep on its own terms when the day's
 # quota runs out (DART meters ~20,000/day per key and locks out on overrun), and
 # --resume picks up at the first symbol that did not finish.
-python -m issuer_data collect --market kr --type stake \
+python -m stock_data collect --market kr --type stake \
     --start 2026-01-01 --end 2026-08-31 --max-api-calls 18000
-python -m issuer_data collect --market kr --type stake \
+python -m stock_data collect --market kr --type stake \
     --start 2026-01-01 --end 2026-08-31 --max-api-calls 18000 --resume
 
 # FX (USDKRW/USDHKD) for currencies present in the DB, then compare across markets
-python -m issuer_data collect --market all --type fx --start 2024-06-01 --end 2024-07-10
-python -m issuer_data compare --symbols AAPL,005930,0700.HK
+python -m stock_data collect --market all --type fx --start 2024-06-01 --end 2024-07-10
+python -m stock_data compare --symbols AAPL,005930,0700.HK
 
 # Cross-listing: link a US ADR to its home listing (or use a curated overrides CSV)
-python -m issuer_data link --symbols US:BABA,HK:9988
-python -m issuer_data link --overrides            # applies data/company_overrides.csv
+python -m stock_data link --symbols US:BABA,HK:9988
+python -m stock_data link --overrides            # applies data/company_overrides.csv
 
-python -m issuer_data status
-python -m issuer_data query --sql "SELECT * FROM v_company_overview LIMIT 10"
+python -m stock_data status
+python -m stock_data query --sql "SELECT * FROM v_company_overview LIMIT 10"
 ```
 
 `--source` overrides the default source for any `(market, type)`; choices:
@@ -172,7 +172,7 @@ runs **per page**, not only when the whole document is empty. A filing is often 
 born-digital with a few scanned pages or a chart holding its numbers inside an image; those
 pages are rendered and passed through Tesseract — multilingual (`eng+kor+chi_tra` by default),
 so Korean/English/Traditional-Chinese scans all recover text into `text_content`. Turn it
-off per run with `--no-ocr`, or globally with `ISSUER_OCR_ENABLED=false`.
+off per run with `--no-ocr`, or globally with `STOCK_OCR_ENABLED=false`.
 
 PyMuPDF/pytesseract/Pillow install with the package, but the Tesseract engine is a system
 package:
@@ -197,7 +197,7 @@ template-, country-, and language-agnostic structured pass on PDFs. The logic is
 geometry-based, so it works on Korean/US/HK annual reports and government filings alike:
 
 ```bash
-python -m issuer_data collect --market hk --type filings --symbols 00700 \
+python -m stock_data collect --market hk --type filings --symbols 00700 \
     --download-docs --extract-tables
 ```
 
@@ -240,7 +240,7 @@ geometry pass for a model on the pages the ruled pass left empty:
 
 ```bash
 pip install '.[ml]'          # torch + transformers + docling, several GB
-python -m issuer_data collect --market hk --type filings --symbols 00700 \
+python -m stock_data collect --market hk --type filings --symbols 00700 \
     --download-docs --extract-tables --ml-engine table-transformer
 ```
 
@@ -264,14 +264,14 @@ The front-end is `pdfplumber` plus the geometry pass; the ML tier above is opt-i
 #### Optional paid escalation (off + local-only by default)
 
 Only the **low-confidence tail** is re-processed by a paid LLM, never the whole corpus.
-Escalation is **disabled and local-only by default** — `ISSUER_PDF_LOCAL_ONLY=true`
+Escalation is **disabled and local-only by default** — `STOCK_PDF_LOCAL_ONLY=true`
 hard-blocks any off-box call even when enabled, so documents never leave the machine
 unless you opt in on **both** flags and provide a key:
 
 ```bash
-ISSUER_PDF_ESCALATION_ENABLED=true ISSUER_PDF_LOCAL_ONLY=false \
-ISSUER_ESCALATION_API_KEY=sk-... \
-python -m issuer_data collect --market us --type filings --symbols AAPL \
+STOCK_PDF_ESCALATION_ENABLED=true STOCK_PDF_LOCAL_ONLY=false \
+STOCK_ESCALATION_API_KEY=sk-... \
+python -m stock_data collect --market us --type filings --symbols AAPL \
     --download-docs --extract-tables
 ```
 
@@ -279,7 +279,7 @@ The `TextReconstructionEscalator` sends only the low-confidence page's **text la
 image) plus the garbled rows to the LLM and re-grounds the JSON it returns — on failure it
 returns nothing and the local result is kept with `needs_review=1` (never fabricated). A
 `VisionEscalator` interface is stubbed for scanned pages (needs a page-render backend).
-Cost is logged per run using `ISSUER_ESCALATION_COST_PER_PAGE`.
+Cost is logged per run using `STOCK_ESCALATION_COST_PER_PAGE`.
 
 ### Knowing whether a parse worked (`validate`)
 
@@ -308,11 +308,11 @@ its page and the line it was read from, so a review is one line to check rather 
 80-page PDF.
 
 ```bash
-python -m issuer_data validate --file filing.pdf            # verdict + the evidence for it
-python -m issuer_data validate --file filing.pdf --agreement          # add a second detector
-python -m issuer_data validate --file filing.pdf --crosscheck-symbol KR:005930
-python -m issuer_data validate --file filing.pdf --fields schema.json # require these fields
-python -m issuer_data review-queue                          # documents awaiting a human
+python -m stock_data validate --file filing.pdf            # verdict + the evidence for it
+python -m stock_data validate --file filing.pdf --agreement          # add a second detector
+python -m stock_data validate --file filing.pdf --crosscheck-symbol KR:005930
+python -m stock_data validate --file filing.pdf --fields schema.json # require these fields
+python -m stock_data review-queue                          # documents awaiting a human
 ```
 
 Every document gets one of three verdicts, stored in `filing_extraction_reports`:
@@ -338,9 +338,9 @@ does not carry every annual line item.
 ### Measuring extraction accuracy (`eval`)
 
 ```bash
-python -m issuer_data eval                 # score the built-in synthetic gold matrix
-python -m issuer_data eval --json          # full report as JSON
-python -m issuer_data eval --escalate      # also run configured escalation, report lift/cost
+python -m stock_data eval                 # score the built-in synthetic gold matrix
+python -m stock_data eval --json          # full report as JSON
+python -m stock_data eval --escalate      # also run configured escalation, report lift/cost
 ```
 
 Reports **TEDS**, **GriTS-Con**, numeric **exact-match**, and **paragraph-continuity** per
@@ -393,7 +393,7 @@ rather than the data being genuinely new).
 
 Standalone lookup for Korean law text via [open.law.go.kr](https://open.law.go.kr) — separate
 from the market/`--type` pipeline above (statutes are national reference data, not tied to a
-market or symbol). Needs a free `ISSUER_LAW_API_OC` — the id-part of the email you register
+market or symbol). Needs a free `STOCK_LAW_API_OC` — the id-part of the email you register
 with (e.g. `abcd` for `abcd@korea.kr`), not a generated key. **Most categories below must also
 be individually checked off under "OPEN API 신청" on the site** — an OC missing a category
 gets a clear error naming it, not a crash. Exception: `--action history` (법령 연혁) has no
@@ -403,26 +403,26 @@ target name for it errors as unapproved even on a fully-approved OC; it works ov
 
 ```bash
 # 현행법령: search, then fetch full text by MST (법령일련번호, from the search results)
-python -m issuer_data law --action search --query 자본시장법
-python -m issuer_data law --action fetch  --mst 283193 --save
+python -m stock_data law --action search --query 자본시장법
+python -m stock_data law --action fetch  --mst 283193 --save
 
 # 법령 연혁 (revision history) / 영문법령 (English translation)
-python -m issuer_data law --action history --query 자본시장법
-python -m issuer_data law --action english --query "Capital Markets" --save
-python -m issuer_data law --action english --mst 284145            # body, once you have an MST
+python -m stock_data law --action history --query 자본시장법
+python -m stock_data law --action english --query "Capital Markets" --save
+python -m stock_data law --action english --mst 284145            # body, once you have an MST
 
 # 신구법 비교 (old-vs-new text) / 3단비교 (법률·시행령·시행규칙 aligned)
-python -m issuer_data law --action oldnew   --mst 283193 --save
-python -m issuer_data law --action threeway --mst 283193
+python -m stock_data law --action oldnew   --mst 283193 --save
+python -m stock_data law --action threeway --mst 283193
 
 # Anything else the API offers — 행정규칙/자치법규/판례/법령해석례/헌재결정례/조약/
 # 별표서식/법령체계도/법령명약칭 — via --target (see RAW_TARGETS in collectors/kr_law.py)
-python -m issuer_data law --action raw --target admrul --query 금융투자   # 행정규칙
-python -m issuer_data law --action raw --target prec   --query 자본시장법 # 판례
-python -m issuer_data law --action raw --target ordin  --query 건축      # 자치법규
+python -m stock_data law --action raw --target admrul --query 금융투자   # 행정규칙
+python -m stock_data law --action raw --target prec   --query 자본시장법 # 판례
+python -m stock_data law --action raw --target ordin  --query 건축      # 자치법규
 
 # Optionally link results to one issuer already in the DB
-python -m issuer_data law --action search --query 상법 --save --symbol KR:005930
+python -m stock_data law --action search --query 상법 --save --symbol KR:005930
 ```
 
 `--save` persists to `statutes` / `statute_history` / `statute_translations` /
@@ -441,10 +441,10 @@ Beyond the four core data types, the tool collects many more categories. `--type
 `lei` (GLEIF Legal Entity Identifier enrichment).
 
 ```bash
-python -m issuer_data collect --market us --type insiders --symbols AAPL   # Form 4 (free, EDGAR)
-python -m issuer_data collect --market us --type actions  --symbols AAPL   # dividends/splits (free, Yahoo)
-python -m issuer_data collect --market us --type lei      --symbols AAPL   # LEI via GLEIF (free)
-python -m issuer_data collect --market us --type ratios   --symbols AAPL   # needs FMP key
+python -m stock_data collect --market us --type insiders --symbols AAPL   # Form 4 (free, EDGAR)
+python -m stock_data collect --market us --type actions  --symbols AAPL   # dividends/splits (free, Yahoo)
+python -m stock_data collect --market us --type lei      --symbols AAPL   # LEI via GLEIF (free)
+python -m stock_data collect --market us --type ratios   --symbols AAPL   # needs FMP key
 ```
 
 ### Statement scope & currency conversion

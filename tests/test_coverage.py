@@ -1,16 +1,16 @@
 """Offline tests for the Extension-B/C coverage layer and correctness fixes."""
 
-from issuer_data.config import Settings
-from issuer_data.models import (
+from stock_data.config import Settings
+from stock_data.models import (
     Company,
     DailyMetric,
     FinancialFact,
     InsiderTrade,
     Security,
 )
-from issuer_data.orchestrator import Orchestrator
-from issuer_data.services import _latest_metric
-from issuer_data.storage.repository import Repository
+from stock_data.orchestrator import Orchestrator
+from stock_data.services import _latest_metric
+from stock_data.storage.repository import Repository
 
 
 def _company(repo, cid_name="ACME"):

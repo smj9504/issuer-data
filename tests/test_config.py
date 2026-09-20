@@ -2,18 +2,18 @@ import os
 
 import pytest
 
-from issuer_data.config import Settings
+from stock_data.config import Settings
 
 
 @pytest.fixture(autouse=True)
 def _isolated_env(monkeypatch):
     """Drop every setting inherited from the real environment.
 
-    Without this the developer's own ISSUER_* / KRX_* values (or a CI secret)
+    Without this the developer's own STOCK_* / KRX_* values (or a CI secret)
     decide the assertions — and a failure would print the live key.
     """
     for name in list(os.environ):
-        if name.startswith(("ISSUER_", "KRX_")):
+        if name.startswith(("STOCK_", "KRX_")):
             monkeypatch.delenv(name, raising=False)
 
 
@@ -31,9 +31,9 @@ def test_krx_reads_unprefixed_names(monkeypatch):
     assert s.krx_pw == "member-pw"
 
 
-def test_krx_falls_back_to_issuer_prefix(monkeypatch):
-    monkeypatch.setenv("ISSUER_KRX_ID", "member-id")
-    monkeypatch.setenv("ISSUER_KRX_PW", "member-pw")
+def test_krx_falls_back_to_stock_prefix(monkeypatch):
+    monkeypatch.setenv("STOCK_KRX_ID", "member-id")
+    monkeypatch.setenv("STOCK_KRX_PW", "member-pw")
     s = _settings()
     assert s.krx_id == "member-id"
     assert s.krx_pw == "member-pw"
@@ -41,7 +41,7 @@ def test_krx_falls_back_to_issuer_prefix(monkeypatch):
 
 def test_krx_unprefixed_wins_over_prefixed(monkeypatch):
     monkeypatch.setenv("KRX_ID", "unprefixed")
-    monkeypatch.setenv("ISSUER_KRX_ID", "prefixed")
+    monkeypatch.setenv("STOCK_KRX_ID", "prefixed")
     assert _settings().krx_id == "unprefixed"
 
 
@@ -51,9 +51,9 @@ def test_krx_absent_is_none():
     assert s.krx_pw is None
 
 
-def test_other_keys_still_use_issuer_prefix(monkeypatch):
-    """The alias is KRX-only; every other secret keeps the ISSUER_ prefix."""
-    monkeypatch.setenv("ISSUER_DART_API_KEY", "dart-key")
+def test_other_keys_still_use_stock_prefix(monkeypatch):
+    """The alias is KRX-only; every other secret keeps the STOCK_ prefix."""
+    monkeypatch.setenv("STOCK_DART_API_KEY", "dart-key")
     monkeypatch.setenv("FMP_API_KEY", "should-be-ignored")
     s = _settings()
     assert s.dart_api_key == "dart-key"

@@ -1,7 +1,7 @@
 import pytest
 
-from issuer_data.models import Company, Price, Security
-from issuer_data.storage.repository import Repository
+from stock_data.models import Company, Price, Security
+from stock_data.storage.repository import Repository
 
 
 def test_resolve_company_by_cik_is_stable(conn):

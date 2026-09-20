@@ -3,7 +3,7 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "issuer-data"
+name = "stock-data"
 version = "0.1.0"
 description = "Multi-market issuer/security data collector (DART, KRX, HKEXnews, SEC EDGAR, yfinance, FMP, Alpha Vantage) into a unified PostgreSQL DB"
 readme = "README.md"
@@ -65,13 +65,13 @@ ml = [
 ]
 
 [project.scripts]
-issuer-data = "issuer_data.cli:main"
+stock-data = "stock_data.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-issuer_data = ["storage/*.sql"]
+stock_data = ["storage/*.sql"]
 
 [tool.ruff]
 line-length = 100

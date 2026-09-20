@@ -2,15 +2,15 @@
 
 import pytest
 
-from issuer_data.collectors.us_edgar import (
+from stock_data.collectors.us_edgar import (
     EDGAR_FULLTEXT_URL,
     NASDAQ_IPO_CALENDAR_URL,
     SUBMISSIONS_URL,
     EdgarCollector,
 )
-from issuer_data.config import Settings
-from issuer_data.models import Company, Filing, Security
-from issuer_data.storage.repository import Repository
+from stock_data.config import Settings
+from stock_data.models import Company, Filing, Security
+from stock_data.storage.repository import Repository
 
 COMPANYFACTS = {
     "cik": 320193,
@@ -486,7 +486,7 @@ def test_fetch_demand_signals_isolates_failures(monkeypatch):
 
 
 def test_base_collector_demand_signals_not_supported():
-    from issuer_data.collectors.base import BaseCollector, NotSupportedError
+    from stock_data.collectors.base import BaseCollector, NotSupportedError
 
     class DummyCollector(BaseCollector):
         source = "dummy"

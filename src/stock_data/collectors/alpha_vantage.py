@@ -35,7 +35,7 @@ class AlphaVantageCollector(BaseCollector):
         self.api_key = settings.alphavantage_api_key
         if not self.api_key:
             raise NotSupportedError(
-                "Alpha Vantage requires ISSUER_ALPHAVANTAGE_API_KEY "
+                "Alpha Vantage requires STOCK_ALPHAVANTAGE_API_KEY "
                 "(free at alphavantage.co/support/#api-key)"
             )
         self.client = HttpClient(rate_limit=settings.alphavantage_rate_limit)

@@ -1,4 +1,4 @@
-"""Logging setup for the issuer-data package."""
+"""Logging setup for the stock-data package."""
 
 from __future__ import annotations
 
@@ -9,12 +9,12 @@ _CONFIGURED = False
 
 
 def setup_logging(level: str | int | None = None) -> None:
-    """Configure root logging once. Level from arg or ISSUER_LOG_LEVEL env."""
+    """Configure root logging once. Level from arg or STOCK_LOG_LEVEL env."""
     global _CONFIGURED
     if _CONFIGURED:
         return
     if level is None:
-        level = os.environ.get("ISSUER_LOG_LEVEL", "INFO")
+        level = os.environ.get("STOCK_LOG_LEVEL", "INFO")
     logging.basicConfig(
         level=level,
         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",

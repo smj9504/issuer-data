@@ -52,7 +52,7 @@ postgresql://postgres:<PASSWORD>@db.<ref>.supabase.co:5432/postgres
 
 ```bash
 # .env  (git에 올라가지 않는다 — .gitignore 2행)
-ISSUER_DB_DSN=postgresql://postgres:<PASSWORD>@db.<ref>.supabase.co:5432/postgres
+STOCK_DB_DSN=postgresql://postgres:<PASSWORD>@db.<ref>.supabase.co:5432/postgres
 ```
 
 `sslmode`를 적지 않아도 된다. 로컬이 아닌 호스트에는 코드가 `sslmode=verify-full`을
@@ -61,8 +61,8 @@ ISSUER_DB_DSN=postgresql://postgres:<PASSWORD>@db.<ref>.supabase.co:5432/postgre
 ## 4. 스키마 적용 + 점검
 
 ```bash
-python -m issuer_data init-db
-python -m issuer_data check-db
+python -m stock_data init-db
+python -m stock_data check-db
 ```
 
 `check-db`가 이렇게 나와야 한다:
@@ -107,28 +107,28 @@ ALTER ROLE analyst SET idle_in_transaction_session_timeout = '60s';
 
 B의 `.env`:
 ```bash
-ISSUER_DB_DSN=postgresql://analyst:<ANALYST_PASSWORD>@db.<ref>.supabase.co:5432/postgres
+STOCK_DB_DSN=postgresql://analyst:<ANALYST_PASSWORD>@db.<ref>.supabase.co:5432/postgres
 ```
 
 B에서 확인 — `writes: no`가 나와야 한다:
 ```bash
-python -m issuer_data check-db
+python -m stock_data check-db
 ```
 
 ## 6. 스윕 시작
 
 ```bash
 # 1) 종목 마스터 (DART 호출 0회)
-python -m issuer_data collect --market kr --type master --source dart
-python -m issuer_data query --sql "SELECT COUNT(*) FROM securities WHERE market='KR'"
+python -m stock_data collect --market kr --type master --source dart
+python -m stock_data query --sql "SELECT COUNT(*) FROM securities WHERE market='KR'"
 #    → 3,988 근처가 나와야 한다. 2면 마스터가 안 채워진 것이니 멈출 것
 
 # 2) 스윕 첫날
-python -m issuer_data collect --market kr --type stake \
+python -m stock_data collect --market kr --type stake \
     --start 2026-01-01 --end 2026-12-31 --max-api-calls 18000
 
 # 3) 다음 날
-python -m issuer_data collect --market kr --type stake \
+python -m stock_data collect --market kr --type stake \
     --start 2026-01-01 --end 2026-12-31 --max-api-calls 18000 --resume
 ```
 
@@ -155,4 +155,4 @@ python -m issuer_data collect --market kr --type stake \
   TRUNCATE를 돌린다. 테스트용은 `docker compose -f docker-compose.test.yml up -d`
   (포트 55432)이고, `conftest.py`의 기본값이 그쪽이라 실수로 섞일 일은 없다.
 - **비밀번호가 로그에 남지 않는다** — `redact()`가 DSN에서 지운다. 다만 직접
-  `echo $ISSUER_DB_DSN` 같은 걸 붙여넣지 않도록 주의.
+  `echo $STOCK_DB_DSN` 같은 걸 붙여넣지 않도록 주의.

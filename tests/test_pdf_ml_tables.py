@@ -12,10 +12,10 @@ import logging
 import pytest
 from test_pdf_columns import _financial_pdf  # same directory, shared PDF fixture
 
-from issuer_data.cli import build_parser
-from issuer_data.config import Settings
-from issuer_data.extraction.pdf import extract as pdf_extract
-from issuer_data.extraction.pdf.ml_tables import _nearest_column, ml_available, ml_ready
+from stock_data.cli import build_parser
+from stock_data.config import Settings
+from stock_data.extraction.pdf import extract as pdf_extract
+from stock_data.extraction.pdf.ml_tables import _nearest_column, ml_available, ml_ready
 
 
 @pytest.fixture(autouse=True)
@@ -40,7 +40,7 @@ def test_unknown_engine_is_reported_not_guessed(caplog):
 
 
 def test_missing_engine_warns_once_with_install_instructions(caplog, monkeypatch):
-    monkeypatch.setattr("issuer_data.extraction.pdf.ml_tables.ml_available", lambda engine: False)
+    monkeypatch.setattr("stock_data.extraction.pdf.ml_tables.ml_available", lambda engine: False)
     with caplog.at_level(logging.WARNING):
         assert ml_ready("table-transformer") is False
         assert ml_ready("table-transformer") is False       # cached
@@ -52,7 +52,7 @@ def test_missing_engine_warns_once_with_install_instructions(caplog, monkeypatch
 
 def test_requesting_an_uninstalled_engine_falls_back_not_fails(monkeypatch, caplog):
     """A missing extra must degrade to the built-in detectors, not lose tables."""
-    monkeypatch.setattr("issuer_data.extraction.pdf.ml_tables.ml_available", lambda engine: False)
+    monkeypatch.setattr("stock_data.extraction.pdf.ml_tables.ml_available", lambda engine: False)
     with caplog.at_level(logging.WARNING):
         doc = pdf_extract.extract_structured(_financial_pdf(), ml_engine="table-transformer")
     assert [t.source_engine for t in doc.tables] == ["column-geometry"]
@@ -129,8 +129,8 @@ def test_docling_failure_falls_back_to_the_built_ins(monkeypatch, caplog):
     def _boom(content):
         raise RuntimeError("model download failed")
 
-    monkeypatch.setattr("issuer_data.extraction.pdf.ml_tables.ml_available", lambda engine: True)
-    monkeypatch.setattr("issuer_data.extraction.pdf.ml_tables.find_docling_tables", _boom)
+    monkeypatch.setattr("stock_data.extraction.pdf.ml_tables.ml_available", lambda engine: True)
+    monkeypatch.setattr("stock_data.extraction.pdf.ml_tables.find_docling_tables", _boom)
     with caplog.at_level(logging.WARNING):
         doc = pdf_extract.extract_structured(_financial_pdf(), ml_engine="docling")
     assert "docling conversion failed" in caplog.text

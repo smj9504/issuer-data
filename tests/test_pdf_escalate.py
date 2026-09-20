@@ -1,14 +1,14 @@
 """Tests for the config-gated PDF escalation framework."""
 
-from issuer_data.config import Settings
-from issuer_data.extraction.pdf.escalate import (
+from stock_data.config import Settings
+from stock_data.extraction.pdf.escalate import (
     NullEscalator,
     TextReconstructionEscalator,
     _parse_rows,
     build_escalator,
     choose_escalations,
 )
-from issuer_data.extraction.pdf.extract import StitchedTable, apply_escalation
+from stock_data.extraction.pdf.extract import StitchedTable, apply_escalation
 
 
 def _tbl(conf):

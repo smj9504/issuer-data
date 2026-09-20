@@ -2,8 +2,8 @@
 
 import pytest
 
-from issuer_data.eval.gold import synthetic_cases
-from issuer_data.eval.harness import run_eval
+from stock_data.eval.gold import synthetic_cases
+from stock_data.eval.harness import run_eval
 
 
 def test_harness_runs_and_scores_synthetic_matrix():

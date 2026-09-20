@@ -9,10 +9,10 @@ of these fails outright on a `?` bind -- psycopg passes it through and reports
 
 import pytest
 
-from issuer_data.collectors import gleif
-from issuer_data.config import Settings
-from issuer_data.models import Company, Security
-from issuer_data.storage.repository import Repository
+from stock_data.collectors import gleif
+from stock_data.config import Settings
+from stock_data.models import Company, Security
+from stock_data.storage.repository import Repository
 
 
 @pytest.fixture()

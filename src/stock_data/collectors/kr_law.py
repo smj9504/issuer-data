@@ -6,7 +6,7 @@ this doesn't plug into the market/data_type collect pipeline. Callers query it
 directly (see `cli.py`'s `law` subcommand) and may optionally attach a
 company_id at storage time to link a statute to one issuer.
 
-Requires a free OC value (ISSUER_LAW_API_OC) — the id-part of the email you
+Requires a free OC value (STOCK_LAW_API_OC) — the id-part of the email you
 register with at open.law.go.kr, not a generated API key. Without it, the
 client raises NotSupportedError.
 
@@ -78,7 +78,7 @@ class LawCollector:
         self.oc = settings.law_api_oc
         if not self.oc:
             raise NotSupportedError(
-                "Korean statute lookup requires ISSUER_LAW_API_OC "
+                "Korean statute lookup requires STOCK_LAW_API_OC "
                 "(free registration at https://open.law.go.kr)"
             )
         self.client = HttpClient(rate_limit=settings.law_rate_limit)
